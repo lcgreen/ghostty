@@ -22,11 +22,13 @@ struct TabSessionState: Codable {
     let id: UUID
     let title: String
     let splitLayout: SplitLayout
+    let agent: AgentType?
 
-    init(id: UUID = UUID(), title: String = "Shell", splitLayout: SplitLayout = .leaf(LeafState())) {
+    init(id: UUID = UUID(), title: String = "Shell", splitLayout: SplitLayout = .leaf(LeafState()), agent: AgentType? = nil) {
         self.id = id
         self.title = title
         self.splitLayout = splitLayout
+        self.agent = agent
     }
 }
 

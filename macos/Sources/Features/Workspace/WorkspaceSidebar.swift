@@ -5,7 +5,8 @@ import SwiftUI
 struct WorkspaceSidebar: View {
     @ObservedObject var manager: WorktreeManager
     @Binding var selectedWorkspaceID: UUID?
-    @State private var showingNewSheet = false
+    @State private var showingNewWorkspace = false
+    @State private var showingNewProject = false
     @State private var workspaceToDelete: Workspace?
 
     var body: some View {
@@ -15,8 +16,13 @@ struct WorkspaceSidebar: View {
             workspaceList
         }
         .frame(minWidth: 200)
-        .sheet(isPresented: $showingNewSheet) {
+        .sheet(isPresented: $showingNewWorkspace) {
             NewWorkspaceSheet(manager: manager) { workspace in
+                selectedWorkspaceID = workspace.id
+            }
+        }
+        .sheet(isPresented: $showingNewProject) {
+            NewProjectSheet(manager: manager) { workspace in
                 selectedWorkspaceID = workspace.id
             }
         }
@@ -40,17 +46,29 @@ struct WorkspaceSidebar: View {
     private var header: some View {
         HStack {
             Text("Workspaces")
-                .font(.headline)
-                .foregroundColor(.primary)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
             Spacer()
-            Button(action: { showingNewSheet = true }) {
+            Menu {
+                Button {
+                    showingNewWorkspace = true
+                } label: {
+                    Label("New Workspace", systemImage: "plus.rectangle.on.rectangle")
+                }
+                Button {
+                    showingNewProject = true
+                } label: {
+                    Label("New Project", systemImage: "folder.badge.plus")
+                }
+            } label: {
                 Image(systemName: "plus")
-                    .font(.body)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.borderless)
-            .help("New Workspace")
-            .keyboardShortcut("n", modifiers: [.command, .shift])
-            .disabled(manager.isCreating)
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("New Workspace or Project")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

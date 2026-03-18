@@ -1,50 +1,40 @@
 import SwiftUI
 
-/// Quick workspace creation sheet — clean, minimal design matching Ghostty's aesthetic.
-/// Workspace name + branch, task prompt with agent picker, repo + base branch.
-struct NewWorkspaceSheet: View {
+/// Quick workspace creation prompt — appears inline or as a popover.
+/// "What do you want to do?" + agent picker + workspace name + branch.
+struct QuickWorkspacePrompt: View {
     @ObservedObject var manager: WorktreeManager
-    let onCreated: (Workspace) -> Void
+    let onCreated: (Workspace, AgentType?) -> Void
+    let onDismiss: () -> Void
 
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var workspaceName = ""
+    @State private var branchName = ""
     @State private var taskDescription = ""
     @State private var selectedAgent: AgentType = .claude
-    @State private var repoPath = ""
+    @State private var selectedRepo: String?
     @State private var baseBranch = "main"
     @State private var isCreating = false
-    @State private var errorMessage: String?
 
     var body: some View {
         VStack(spacing: 0) {
             // Name + branch row
             nameRow
 
-            Divider().opacity(0.3)
-
-            // Task prompt with agent picker
+            // Task description
             taskInput
 
-            Divider().opacity(0.3)
-
-            // Repo + branch + submit hint
+            // Bottom bar: repo, branch, hint
             bottomBar
-
-            // Error
-            if let error = errorMessage {
-                Text(error)
-                    .font(.system(size: 11))
-                    .foregroundColor(.red)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 6)
-            }
         }
-        .frame(width: 520)
         .background(.ultraThinMaterial)
         .cornerRadius(12)
-        .padding(20)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(Color.accentColor.opacity(0.3), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.3), radius: 20, y: 10)
     }
 
     // MARK: - Name Row
@@ -58,15 +48,19 @@ struct NewWorkspaceSheet: View {
                 .padding(.vertical, 10)
                 .onChange(of: workspaceName) { newValue in
                     workspaceName = sanitize(newValue)
+                    if branchName.isEmpty || branchName == sanitize(String(workspaceName.dropLast())) {
+                        branchName = workspaceName
+                    }
                 }
 
             Spacer()
 
-            Text(branchDisplay)
+            Text(branchName.isEmpty ? "branch-name" : branchName)
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(.tertiary)
                 .padding(.trailing, 12)
         }
+        .background(Color.primary.opacity(0.03))
     }
 
     // MARK: - Task Input
@@ -76,15 +70,15 @@ struct NewWorkspaceSheet: View {
             TextField("What do you want to do?", text: $taskDescription, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
-                .lineLimit(2...5)
+                .lineLimit(3...6)
                 .padding(.horizontal, 12)
                 .padding(.top, 10)
 
             HStack(spacing: 6) {
                 agentPicker
-
                 Spacer()
 
+                // + button (for attachments/context — future)
                 Button(action: {}) {
                     Image(systemName: "plus")
                         .font(.system(size: 11))
@@ -95,13 +89,15 @@ struct NewWorkspaceSheet: View {
                 .background(Color.secondary.opacity(0.1))
                 .cornerRadius(12)
 
+                // Submit
                 Button(action: createWorkspace) {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.system(size: 22))
-                        .foregroundColor(isValid ? .accentColor : Color.secondary.opacity(0.3))
+                        .foregroundColor(isValid ? .accentColor : .secondary)
                 }
                 .buttonStyle(.plain)
                 .disabled(!isValid || isCreating)
+                .keyboardShortcut(.return, modifiers: .command)
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 10)
@@ -118,12 +114,6 @@ struct NewWorkspaceSheet: View {
                 } label: {
                     Label(agent.displayName, systemImage: agent.iconName)
                 }
-            }
-            Divider()
-            Button {
-                // No agent
-            } label: {
-                Label("None", systemImage: "terminal")
             }
         } label: {
             HStack(spacing: 4) {
@@ -149,28 +139,28 @@ struct NewWorkspaceSheet: View {
     private var bottomBar: some View {
         HStack(spacing: 8) {
             // Repo picker
-            Menu {
-                ForEach(availableRepos, id: \.self) { repo in
-                    Button(repoDisplayName(repo)) {
-                        repoPath = repo
+            if let repos = availableRepos, !repos.isEmpty {
+                Menu {
+                    ForEach(repos, id: \.self) { repo in
+                        Button(repoDisplayName(repo)) {
+                            selectedRepo = repo
+                        }
                     }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "circle.fill")
+                            .font(.system(size: 6))
+                            .foregroundColor(.green)
+                        Text(selectedRepo.map(repoDisplayName) ?? "Select repo")
+                            .font(.system(size: 11))
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8))
+                    }
+                    .foregroundStyle(.secondary)
                 }
-                Divider()
-                Button("Browse...") { browseForRepo() }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "circle.fill")
-                        .font(.system(size: 6))
-                        .foregroundColor(repoPath.isEmpty ? .secondary : .green)
-                    Text(repoPath.isEmpty ? "Select repo" : repoDisplayName(repoPath))
-                        .font(.system(size: 11))
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 8))
-                }
-                .foregroundStyle(.secondary)
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
 
             // Base branch
             Menu {
@@ -199,26 +189,48 @@ struct NewWorkspaceSheet: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+        .background(Color.primary.opacity(0.03))
+    }
+
+    // MARK: - Validation
+
+    private var isValid: Bool {
+        selectedRepo != nil && !taskDescription.isEmpty
+    }
+
+    // MARK: - Available Repos
+
+    private var availableRepos: [String]? {
+        let repos = manager.workspaces.map(\.repoPath)
+        return Array(Set(repos)).sorted()
+    }
+
+    // MARK: - Actions
+
+    private func createWorkspace() {
+        guard let repo = selectedRepo, isValid else { return }
+        isCreating = true
+
+        let name = workspaceName.isEmpty
+            ? sanitize(String(taskDescription.prefix(30)))
+            : workspaceName
+
+        Task {
+            do {
+                let workspace = try await manager.createWorkspace(
+                    repo: repo,
+                    name: name,
+                    baseBranch: baseBranch,
+                    agent: selectedAgent
+                )
+                onCreated(workspace, selectedAgent)
+            } catch {
+                isCreating = false
+            }
+        }
     }
 
     // MARK: - Helpers
-
-    private var branchDisplay: String {
-        let name = workspaceName.isEmpty ? "name" : workspaceName
-        return "ghostset/\(name)"
-    }
-
-    private var isValid: Bool {
-        !repoPath.isEmpty
-    }
-
-    private var availableRepos: [String] {
-        Array(Set(manager.workspaces.map(\.repoPath))).sorted()
-    }
-
-    private func repoDisplayName(_ path: String) -> String {
-        URL(fileURLWithPath: path).lastPathComponent
-    }
 
     private func sanitize(_ input: String) -> String {
         input.lowercased()
@@ -226,44 +238,7 @@ struct NewWorkspaceSheet: View {
             .filter { $0.isLetter || $0.isNumber || $0 == "-" }
     }
 
-    private func browseForRepo() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.message = "Select a git repository"
-        if panel.runModal() == .OK, let url = panel.url {
-            repoPath = url.path
-        }
-    }
-
-    // MARK: - Create
-
-    private func createWorkspace() {
-        guard isValid else { return }
-        isCreating = true
-        errorMessage = nil
-
-        let name = workspaceName.isEmpty
-            ? sanitize(String(taskDescription.prefix(30)))
-            : workspaceName
-
-        let finalName = name.isEmpty ? "workspace-\(Int.random(in: 1000...9999))" : name
-
-        Task {
-            do {
-                let workspace = try await manager.createWorkspace(
-                    repo: repoPath,
-                    name: finalName,
-                    baseBranch: baseBranch,
-                    agent: selectedAgent
-                )
-                dismiss()
-                onCreated(workspace)
-            } catch {
-                errorMessage = error.localizedDescription
-                isCreating = false
-            }
-        }
+    private func repoDisplayName(_ path: String) -> String {
+        URL(fileURLWithPath: path).lastPathComponent
     }
 }

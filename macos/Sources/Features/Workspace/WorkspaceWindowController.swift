@@ -70,9 +70,10 @@ class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSMenuIte
         window.toolbarStyle = .unifiedCompact
         window.minSize = NSSize(width: 600, height: 400)
 
-        // Enable native macOS tab bar
-        window.tabbingMode = .preferred
-        window.tabbingIdentifier = "com.mitchellh.ghostty.workspace"
+        // Disable native tabs — we use a custom per-workspace tab bar
+        window.tabbingMode = .disallowed
+        // Disable macOS window restoration (we handle our own persistence)
+        window.isRestorable = false
 
         super.init(window: window)
         window.delegate = self
@@ -122,7 +123,8 @@ class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSMenuIte
     @objc private func onGhosttyNewTab(_ notification: Notification) {
         guard let surface = notification.object as? Ghostty.SurfaceView else { return }
         guard let surfaceWindow = surface.window, surfaceWindow == self.window else { return }
-        newWindowForTab(nil)
+        // Route to custom tab creation, not native tabs
+        newTab(nil)
     }
 
     @available(*, unavailable)
@@ -136,10 +138,15 @@ class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSMenuIte
     private(set) var titleOverride: String?
 
     /// Reference to the active terminal view model (set by the SwiftUI view).
-    /// Used to capture split layout for persistence.
     weak var terminalViewModel: WorkspaceTerminalViewModel?
 
-    @IBAction func changeTabTitle(_ sender: Any) {
+    /// Reference to the active tab group (set by the SwiftUI view).
+    weak var activeTabGroup: WorkspaceTabGroup?
+
+    /// Responds to both menu bar and context menu changeTabTitle: action.
+    /// The context menu targets BaseTerminalController.changeTabTitle: but
+    /// ObjC dispatch matches by selector name, so this catches it too.
+    @objc @IBAction func changeTabTitle(_ sender: Any) {
         guard let window else { return }
 
         let alert = NSAlert()
@@ -168,6 +175,12 @@ class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSMenuIte
                 self.titleOverride = newTitle
                 self.window?.title = newTitle
             }
+
+            // Also update the active custom tab's title
+            if let group = self.activeTabGroup, let activeID = group.activeTabID,
+               let idx = group.tabs.firstIndex(where: { $0.id == activeID }) {
+                group.tabs[idx].title = newTitle.isEmpty ? "Shell" : newTitle
+            }
         }
     }
 
@@ -193,41 +206,21 @@ class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSMenuIte
         return true
     }
 
-    // MARK: - New Tab
+    // MARK: - New Tab (custom tab bar, NOT native macOS tabs)
 
-    /// Intercept the menu bar's Cmd+T action via the responder chain.
-    /// This fires before AppDelegate.newTab because window controllers
-    /// are higher in the responder chain than the app delegate.
+    /// Intercept Cmd+T — create a custom workspace tab, not a native tab.
     @IBAction func newTab(_ sender: Any?) {
-        newWindowForTab(nil)
+        NotificationCenter.default.post(name: .ghostsetNewWorkspaceTab, object: nil)
     }
 
-    /// Called by macOS when the user clicks "+" in the tab bar.
-    /// New tabs inherit the current tab's workspace selection.
-    override func newWindowForTab(_ sender: Any?) {
-        let newController = WorkspaceWindowController(
-            ghostty,
-            workspaceID: selectedWorkspaceID
-        )
-        addAsTab(newController)
-    }
-
-    /// Create a new tab with an agent auto-launched.
+    /// Agents are launched via custom tabs, not native window tabs.
     func newTabWithAgent(_ agent: AgentType) {
-        let newController = WorkspaceWindowController(
-            ghostty,
-            workspaceID: selectedWorkspaceID,
-            title: agent.displayName,
-            agent: agent
+        // Post notification with agent info — handled by WorkspaceWindow
+        NotificationCenter.default.post(
+            name: .ghostsetNewWorkspaceTab,
+            object: nil,
+            userInfo: ["agent": agent]
         )
-        addAsTab(newController)
-    }
-
-    private func addAsTab(_ newController: WorkspaceWindowController) {
-        guard let newWindow = newController.window,
-              let existingWindow = self.window else { return }
-        existingWindow.addTabbedWindow(newWindow, ordered: .above)
-        newWindow.makeKeyAndOrderFront(nil)
     }
 
     // MARK: - NSWindowDelegate
@@ -242,54 +235,90 @@ class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSMenuIte
         Self.activeControllers.remove(self)
     }
 
-    /// Persist the current set of workspace window tabs.
+    /// Save all workspace tab groups to session files.
     static func saveWindowTabState() {
-        let tabs = all.map { controller in
-            let layout: SplitLayout? = if let vm = controller.terminalViewModel {
-                SplitLayout.from(tree: vm.surfaceTree)
-            } else {
-                nil
+        let persistence = WorkspacePersistence()
+
+        // Collect all unique workspace IDs with tab groups
+        var saved = Set<UUID>()
+        for controller in all {
+            guard let wsID = controller.selectedWorkspaceID,
+                  let group = controller.activeTabGroup,
+                  !saved.contains(wsID) else { continue }
+            saved.insert(wsID)
+
+            let tabStates = group.tabs.compactMap { tab -> TabSessionState? in
+                guard let layout = SplitLayout.from(tree: tab.viewModel.surfaceTree) else { return nil }
+                return TabSessionState(title: tab.title, splitLayout: layout, agent: tab.agent)
             }
-            return WindowTabState(
+            guard !tabStates.isEmpty else { continue }
+
+            let session = WorkspaceSessionState(
+                workspaceID: wsID,
+                tabs: tabStates,
+                activeTabIndex: group.tabs.firstIndex(where: { $0.id == group.activeTabID }) ?? 0
+            )
+            persistence.saveSession(session)
+        }
+
+        // Also save window-state.json for backward compat
+        let tabs = all.map { controller in
+            WindowTabState(
                 selectedWorkspaceID: controller.selectedWorkspaceID,
-                splitLayout: layout,
-                title: controller.titleOverride,
-                agent: controller.initialAgent,
-                agentSessionID: controller.agentSessionID
+                splitLayout: nil, title: controller.titleOverride,
+                agent: controller.initialAgent, agentSessionID: controller.agentSessionID
             )
         }
-        let state = WindowState(tabs: tabs)
-        WorkspacePersistence().saveWindowState(state)
+        persistence.saveWindowState(WindowState(tabs: tabs))
+    }
+
+    /// Get all controllers for a specific workspace.
+    static func controllers(for workspaceID: UUID?) -> [WorkspaceWindowController] {
+        all.filter { $0.selectedWorkspaceID == workspaceID }
     }
 
     /// Restore workspace window tabs from persistence.
-    /// Called once on app launch instead of creating a blank workspace window.
+    /// Groups tabs by workspace so each workspace gets its own tab group.
     static func restoreWindowTabs(_ ghostty: Ghostty.App) -> Bool {
         let persistence = WorkspacePersistence()
         guard let state = persistence.loadWindowState(), !state.tabs.isEmpty else {
             return false
         }
 
+        // Group tabs by workspace
+        var groups: [UUID?: [WindowTabState]] = [:]
+        for tab in state.tabs {
+            groups[tab.selectedWorkspaceID, default: []].append(tab)
+        }
+
         var firstController: WorkspaceWindowController?
-        for (index, tab) in state.tabs.enumerated() {
-            let controller = WorkspaceWindowController(
-                ghostty,
-                workspaceID: tab.selectedWorkspaceID,
-                splitLayout: tab.splitLayout,
-                title: tab.title,
-                agent: tab.agent,
-                agentSessionID: tab.agentSessionID
-            )
-            if index == 0 {
-                firstController = controller
-                controller.showWindow(nil)
-            } else if let firstWindow = firstController?.window,
-                      let newWindow = controller.window {
-                firstWindow.addTabbedWindow(newWindow, ordered: .above)
+
+        for (_, tabs) in groups {
+            var groupFirst: WorkspaceWindowController?
+
+            for (index, tab) in tabs.enumerated() {
+                let controller = WorkspaceWindowController(
+                    ghostty,
+                    workspaceID: tab.selectedWorkspaceID,
+                    splitLayout: tab.splitLayout,
+                    title: tab.title,
+                    agent: tab.agent,
+                    agentSessionID: tab.agentSessionID
+                )
+
+                if index == 0 {
+                    groupFirst = controller
+                    controller.showWindow(nil)
+                    if firstController == nil {
+                        firstController = controller
+                    }
+                } else if let groupWindow = groupFirst?.window,
+                          let newWindow = controller.window {
+                    groupWindow.addTabbedWindow(newWindow, ordered: .above)
+                }
             }
         }
 
-        // Make the first tab key
         firstController?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         return true

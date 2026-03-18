@@ -10,6 +10,30 @@
 		29C15B1D2CDC3B2900520DD4 /* bat in Resources */ = {isa = PBXBuildFile; fileRef = 29C15B1C2CDC3B2000520DD4 /* bat */; };
 		55154BE02B33911F001622DC /* ghostty in Resources */ = {isa = PBXBuildFile; fileRef = 55154BDF2B33911F001622DC /* ghostty */; };
 		552964E62B34A9B400030505 /* vim in Resources */ = {isa = PBXBuildFile; fileRef = 552964E52B34A9B400030505 /* vim */; };
+		7A31EF3B2F6AC67700AE0382 /* WorkspacePersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF352F6AC67700AE0382 /* WorkspacePersistence.swift */; };
+		7A31EF3C2F6AC67700AE0382 /* WorkspaceSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF372F6AC67700AE0382 /* WorkspaceSidebar.swift */; };
+		7A31EF3D2F6AC67700AE0382 /* AgentLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF2C2F6AC67700AE0382 /* AgentLauncher.swift */; };
+		7A31EF3E2F6AC67700AE0382 /* AgentType.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF2D2F6AC67700AE0382 /* AgentType.swift */; };
+		7A31EF3F2F6AC67700AE0382 /* WorktreeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF392F6AC67700AE0382 /* WorktreeManager.swift */; };
+		7A31EF402F6AC67700AE0382 /* GitService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF2F2F6AC67700AE0382 /* GitService.swift */; };
+		7A31EF412F6AC67700AE0382 /* INTEGRATION_GUIDE.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF312F6AC67700AE0382 /* INTEGRATION_GUIDE.swift */; };
+		7A31EF422F6AC67700AE0382 /* NewWorkspaceSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF322F6AC67700AE0382 /* NewWorkspaceSheet.swift */; };
+		7A31EF432F6AC67700AE0382 /* WorkspaceWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF382F6AC67700AE0382 /* WorkspaceWindow.swift */; };
+		7A31EF442F6AC67700AE0382 /* WorkspaceRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF362F6AC67700AE0382 /* WorkspaceRow.swift */; };
+		7A31EF452F6AC67700AE0382 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF332F6AC67700AE0382 /* WelcomeView.swift */; };
+		7A31EF462F6AC67700AE0382 /* WorkspaceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF342F6AC67700AE0382 /* WorkspaceModel.swift */; };
+		7A31EF472F6AC67700AE0382 /* WorkspacePersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF352F6AC67700AE0382 /* WorkspacePersistence.swift */; };
+		7A31EF482F6AC67700AE0382 /* WorkspaceSidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF372F6AC67700AE0382 /* WorkspaceSidebar.swift */; };
+		7A31EF492F6AC67700AE0382 /* AgentLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF2C2F6AC67700AE0382 /* AgentLauncher.swift */; };
+		7A31EF4A2F6AC67700AE0382 /* AgentType.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF2D2F6AC67700AE0382 /* AgentType.swift */; };
+		7A31EF4B2F6AC67700AE0382 /* WorktreeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF392F6AC67700AE0382 /* WorktreeManager.swift */; };
+		7A31EF4C2F6AC67700AE0382 /* GitService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF2F2F6AC67700AE0382 /* GitService.swift */; };
+		7A31EF4D2F6AC67700AE0382 /* INTEGRATION_GUIDE.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF312F6AC67700AE0382 /* INTEGRATION_GUIDE.swift */; };
+		7A31EF4E2F6AC67700AE0382 /* NewWorkspaceSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF322F6AC67700AE0382 /* NewWorkspaceSheet.swift */; };
+		7A31EF4F2F6AC67700AE0382 /* WorkspaceWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF382F6AC67700AE0382 /* WorkspaceWindow.swift */; };
+		7A31EF502F6AC67700AE0382 /* WorkspaceRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF362F6AC67700AE0382 /* WorkspaceRow.swift */; };
+		7A31EF512F6AC67700AE0382 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF332F6AC67700AE0382 /* WelcomeView.swift */; };
+		7A31EF522F6AC67700AE0382 /* WorkspaceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A31EF342F6AC67700AE0382 /* WorkspaceModel.swift */; };
 		819324582F24E78800A9ED8F /* DockTilePlugin.plugin in Copy DockTilePlugin */ = {isa = PBXBuildFile; fileRef = 8193244D2F24E6C000A9ED8F /* DockTilePlugin.plugin */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		819324642F24FF2100A9ED8F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A5B30538299BEAAB0047F10C /* Assets.xcassets */; };
 		8F3A9B4C2FA6B88000A18D13 /* Ghostty.sdef in Resources */ = {isa = PBXBuildFile; fileRef = 8F3A9B4B2FA6B88000A18D13 /* Ghostty.sdef */; };
@@ -73,6 +97,18 @@
 		3B39CAA42B33949B00DABEB8 /* GhosttyReleaseLocal.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GhosttyReleaseLocal.entitlements; sourceTree = "<group>"; };
 		55154BDF2B33911F001622DC /* ghostty */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ghostty; path = "../zig-out/share/ghostty"; sourceTree = "<group>"; };
 		552964E52B34A9B400030505 /* vim */ = {isa = PBXFileReference; lastKnownFileType = folder; name = vim; path = "../zig-out/share/vim"; sourceTree = "<group>"; };
+		7A31EF2C2F6AC67700AE0382 /* AgentLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentLauncher.swift; sourceTree = "<group>"; };
+		7A31EF2D2F6AC67700AE0382 /* AgentType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentType.swift; sourceTree = "<group>"; };
+		7A31EF2F2F6AC67700AE0382 /* GitService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitService.swift; sourceTree = "<group>"; };
+		7A31EF312F6AC67700AE0382 /* INTEGRATION_GUIDE.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = INTEGRATION_GUIDE.swift; sourceTree = "<group>"; };
+		7A31EF322F6AC67700AE0382 /* NewWorkspaceSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewWorkspaceSheet.swift; sourceTree = "<group>"; };
+		7A31EF332F6AC67700AE0382 /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
+		7A31EF342F6AC67700AE0382 /* WorkspaceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceModel.swift; sourceTree = "<group>"; };
+		7A31EF352F6AC67700AE0382 /* WorkspacePersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspacePersistence.swift; sourceTree = "<group>"; };
+		7A31EF362F6AC67700AE0382 /* WorkspaceRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceRow.swift; sourceTree = "<group>"; };
+		7A31EF372F6AC67700AE0382 /* WorkspaceSidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSidebar.swift; sourceTree = "<group>"; };
+		7A31EF382F6AC67700AE0382 /* WorkspaceWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceWindow.swift; sourceTree = "<group>"; };
+		7A31EF392F6AC67700AE0382 /* WorktreeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeManager.swift; sourceTree = "<group>"; };
 		810ACC9F2E9D3301004F8F92 /* GhosttyUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GhosttyUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8193244D2F24E6C000A9ED8F /* DockTilePlugin.plugin */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DockTilePlugin.plugin; sourceTree = BUILT_PRODUCTS_DIR; };
 		8F3A9B4B2FA6B88000A18D13 /* Ghostty.sdef */ = {isa = PBXFileReference; lastKnownFileType = text.sdef; path = Ghostty.sdef; sourceTree = "<group>"; };
@@ -315,6 +351,39 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		7A31EF2E2F6AC67700AE0382 /* Agent */ = {
+			isa = PBXGroup;
+			children = (
+				7A31EF2C2F6AC67700AE0382 /* AgentLauncher.swift */,
+				7A31EF2D2F6AC67700AE0382 /* AgentType.swift */,
+			);
+			path = Agent;
+			sourceTree = "<group>";
+		};
+		7A31EF302F6AC67700AE0382 /* Git */ = {
+			isa = PBXGroup;
+			children = (
+				7A31EF2F2F6AC67700AE0382 /* GitService.swift */,
+			);
+			path = Git;
+			sourceTree = "<group>";
+		};
+		7A31EF3A2F6AC67700AE0382 /* Workspace */ = {
+			isa = PBXGroup;
+			children = (
+				7A31EF312F6AC67700AE0382 /* INTEGRATION_GUIDE.swift */,
+				7A31EF322F6AC67700AE0382 /* NewWorkspaceSheet.swift */,
+				7A31EF332F6AC67700AE0382 /* WelcomeView.swift */,
+				7A31EF342F6AC67700AE0382 /* WorkspaceModel.swift */,
+				7A31EF352F6AC67700AE0382 /* WorkspacePersistence.swift */,
+				7A31EF362F6AC67700AE0382 /* WorkspaceRow.swift */,
+				7A31EF372F6AC67700AE0382 /* WorkspaceSidebar.swift */,
+				7A31EF382F6AC67700AE0382 /* WorkspaceWindow.swift */,
+				7A31EF392F6AC67700AE0382 /* WorktreeManager.swift */,
+			);
+			path = Workspace;
+			sourceTree = "<group>";
+		};
 		A5A1F8862A489D7400D1E8BC /* Resources */ = {
 			isa = PBXGroup;
 			children = (
@@ -335,6 +404,9 @@
 		A5B30528299BEAAA0047F10C = {
 			isa = PBXGroup;
 			children = (
+				7A31EF2E2F6AC67700AE0382 /* Agent */,
+				7A31EF302F6AC67700AE0382 /* Git */,
+				7A31EF3A2F6AC67700AE0382 /* Workspace */,
 				A571AB1C2A206FC600248498 /* Ghostty-Info.plist */,
 				8F3A9B4B2FA6B88000A18D13 /* Ghostty.sdef */,
 				A5B30538299BEAAB0047F10C /* Assets.xcassets */,
@@ -644,6 +716,18 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7A31EF472F6AC67700AE0382 /* WorkspacePersistence.swift in Sources */,
+				7A31EF482F6AC67700AE0382 /* WorkspaceSidebar.swift in Sources */,
+				7A31EF492F6AC67700AE0382 /* AgentLauncher.swift in Sources */,
+				7A31EF4A2F6AC67700AE0382 /* AgentType.swift in Sources */,
+				7A31EF4B2F6AC67700AE0382 /* WorktreeManager.swift in Sources */,
+				7A31EF4C2F6AC67700AE0382 /* GitService.swift in Sources */,
+				7A31EF4D2F6AC67700AE0382 /* INTEGRATION_GUIDE.swift in Sources */,
+				7A31EF4E2F6AC67700AE0382 /* NewWorkspaceSheet.swift in Sources */,
+				7A31EF4F2F6AC67700AE0382 /* WorkspaceWindow.swift in Sources */,
+				7A31EF502F6AC67700AE0382 /* WorkspaceRow.swift in Sources */,
+				7A31EF512F6AC67700AE0382 /* WelcomeView.swift in Sources */,
+				7A31EF522F6AC67700AE0382 /* WorkspaceModel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
