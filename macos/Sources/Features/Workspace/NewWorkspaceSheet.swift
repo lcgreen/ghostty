@@ -68,7 +68,7 @@ struct NewWorkspaceSheet: View {
             Section {
                 TextField("e.g. add-auth, fix-bug-123", text: $workspaceName)
                     .textFieldStyle(.roundedBorder)
-                    .onChange(of: workspaceName) { _, newValue in
+                    .onChange(of: workspaceName) { newValue in
                         // Sanitize: lowercase, hyphens only
                         workspaceName = sanitizeName(newValue)
                     }

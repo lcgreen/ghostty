@@ -98,6 +98,8 @@ struct WorkspaceRow: View {
         switch agent {
         case .claude: return .orange
         case .codex: return .green
+        case .copilot: return .indigo
+        case .opencode: return .teal
         case .gemini: return .blue
         case .cursor: return .purple
         case .custom: return .secondary

@@ -356,10 +356,19 @@ class AppDelegate: NSObject,
             // is possible to have other windows in a few scenarios:
             //   - if we're opening a URL since `application(_:openFile:)` is called before this.
             //   - if we're restoring from persisted state
-            if TerminalController.all.isEmpty && derivedConfig.initialWindow {
-                undoManager.disableUndoRegistration()
-                _ = TerminalController.newWindow(ghostty)
-                undoManager.enableUndoRegistration()
+            if TerminalController.all.isEmpty && !WorkspaceWindowController.hasWindows && derivedConfig.initialWindow {
+                // Defer to next run loop tick so the app is fully initialized
+                // before the SwiftUI hosting view sets up terminal surfaces.
+                DispatchQueue.main.async { [self] in
+                    // Try to restore persisted workspace tabs first
+                    if !WorkspaceWindowController.restoreWindowTabs(self.ghostty) {
+                        // No saved tabs — create a fresh workspace window
+                        let controller = WorkspaceWindowController(self.ghostty)
+                        controller.showWindow(self)
+                        controller.window?.makeKeyAndOrderFront(nil)
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
+                }
             }
         }
     }
@@ -369,6 +378,10 @@ class AppDelegate: NSObject,
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Save workspace state before anything closes
+        WorkspaceWindowController.saveWindowTabState()
+        NotificationCenter.default.post(name: .ghostsetSaveSession, object: nil)
+
         let windows = NSApplication.shared.windows
         if windows.isEmpty { return .terminateNow }
 
@@ -427,6 +440,14 @@ class AppDelegate: NSObject,
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // Save workspace window tab state before quitting
+        WorkspaceWindowController.saveWindowTabState()
+
+        // Save per-workspace session state (split layouts)
+        NotificationCenter.default.post(
+            name: .ghostsetSaveSession, object: nil
+        )
+
         // We have no notifications we want to persist after death,
         // so remove them all now. In the future we may want to be
         // more selective and only remove surface-targeted notifications.
@@ -440,19 +461,20 @@ class AppDelegate: NSObject,
         // of focusing one of them.
         guard !flag else { return true }
 
-        // If we have any windows in our terminal manager we don't do anything.
-        // This is possible with flag set to false if there a race where the
-        // window is still initializing and is not visible but the user clicked
-        // the dock icon.
-        guard TerminalController.all.isEmpty else { return true }
+        // If we have any windows in our terminal or workspace manager we don't
+        // do anything. This is possible with flag set to false if there a race
+        // where the window is still initializing and is not visible but the user
+        // clicked the dock icon.
+        guard TerminalController.all.isEmpty && !WorkspaceWindowController.hasWindows else { return true }
 
         // If the application isn't active yet then we don't want to process
         // this because we're not ready. This happens sometimes in Xcode runs
         // but I haven't seen it happen in releases. I'm unsure why.
         guard applicationHasBecomeActive else { return true }
 
-        // No visible windows, open a new one.
-        _ = TerminalController.newWindow(ghostty)
+        // No visible windows, open a workspace window.
+        let controller = WorkspaceWindowController(ghostty)
+        controller.showWindow(self)
         return false
     }
 
@@ -1098,10 +1120,12 @@ extension AppDelegate {
     }
 
     private func reloadDockMenu() {
-        let newWindow = NSMenuItem(title: "New Window", action: #selector(newWindow), keyEquivalent: "")
+        let newWorkspace = NSMenuItem(title: "New Workspace Window", action: #selector(newWorkspaceWindow), keyEquivalent: "")
+        let newWindow = NSMenuItem(title: "New Terminal Window", action: #selector(newWindow), keyEquivalent: "")
         let newTab = NSMenuItem(title: "New Tab", action: #selector(newTab), keyEquivalent: "")
 
         dockMenu.removeAllItems()
+        dockMenu.addItem(newWorkspace)
         dockMenu.addItem(newWindow)
         dockMenu.addItem(newTab)
     }

@@ -3,7 +3,6 @@ import Combine
 
 /// Manages git worktrees and workspace lifecycle.
 /// All git operations are async and run off the main thread.
-@MainActor
 final class WorktreeManager: ObservableObject {
 
     // MARK: - Published State
@@ -21,11 +20,26 @@ final class WorktreeManager: ObservableObject {
     private let fileManager = FileManager.default
     private let persistence: WorkspacePersistence
 
+    /// Per-workspace command history.
+    let commandHistory = WorkspaceCommandHistory()
+
     // MARK: - Init
 
     init() {
         self.persistence = WorkspacePersistence()
         self.workspaces = persistence.load()
+    }
+
+    // MARK: - Session Persistence
+
+    /// Save a workspace's terminal session layout.
+    func saveSession(_ session: WorkspaceSessionState) {
+        persistence.saveSession(session)
+    }
+
+    /// Load a workspace's terminal session layout.
+    func loadSession(workspaceID: UUID) -> WorkspaceSessionState? {
+        persistence.loadSession(workspaceID: workspaceID)
     }
 
     // MARK: - Create Workspace
