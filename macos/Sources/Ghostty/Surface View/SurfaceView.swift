@@ -27,6 +27,12 @@ extension Ghostty {
             self.content = content
         }
 
+        /// Initialize with a base configuration (e.g. for workspace-specific terminals).
+        init(_ app: ghostty_app_t, baseConfig: SurfaceConfiguration?, @ViewBuilder content: @escaping ((SurfaceView) -> Content)) {
+            _surfaceView = StateObject(wrappedValue: SurfaceView(app, baseConfig: baseConfig))
+            self.content = content
+        }
+
         var body: some View {
             content(surfaceView)
         }

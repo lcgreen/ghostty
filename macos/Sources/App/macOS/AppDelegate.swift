@@ -957,6 +957,13 @@ class AppDelegate: NSObject,
         _ = TerminalController.newWindow(ghostty)
     }
 
+    /// Creates a new workspace window with sidebar and worktree management.
+    /// Keyboard shortcut: Cmd+Shift+N
+    @IBAction func newWorkspaceWindow(_ sender: Any?) {
+        let controller = WorkspaceWindowController(ghostty)
+        controller.showWindow(self)
+    }
+
     @IBAction func newTab(_ sender: Any?) {
         _ = TerminalController.newTab(
             ghostty,

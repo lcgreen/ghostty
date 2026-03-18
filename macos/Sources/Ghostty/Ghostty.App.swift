@@ -24,6 +24,10 @@ extension Ghostty {
         /// The readiness value of the state.
         @Published var readiness: Readiness = .loading
 
+        /// Workspace manager for Ghostset workspace orchestration.
+        /// Manages git worktrees, workspace lifecycle, and persistence.
+        let workspaceManager = WorktreeManager()
+
         /// The global app configuration. This defines the app level configuration plus any behavior
         /// for new windows, tabs, etc. Note that when creating a new window, it may inherit some
         /// configuration (i.e. font size) from the previously focused window. This would override this.
