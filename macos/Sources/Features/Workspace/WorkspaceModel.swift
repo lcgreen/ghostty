@@ -13,13 +13,15 @@ struct Workspace: Identifiable, Codable, Hashable {
     let createdAt: Date
     var agent: AgentType?
     var status: WorkspaceStatus
+    var tags: [String]
 
     init(
         name: String,
         repoPath: String,
         worktreePath: String,
         branch: String,
-        agent: AgentType? = nil
+        agent: AgentType? = nil,
+        tags: [String] = []
     ) {
         self.id = UUID()
         self.name = name
@@ -29,6 +31,7 @@ struct Workspace: Identifiable, Codable, Hashable {
         self.createdAt = Date()
         self.agent = agent
         self.status = .creating
+        self.tags = tags
     }
 
     func hash(into hasher: inout Hasher) {

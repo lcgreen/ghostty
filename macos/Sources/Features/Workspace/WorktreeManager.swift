@@ -37,6 +37,15 @@ final class WorktreeManager: ObservableObject {
         self.workspaces = persistence.load()
     }
 
+    // MARK: - Update Workspace
+
+    /// Update a workspace in-place (e.g. tags, agent).
+    func updateWorkspace(_ workspace: Workspace) {
+        guard let idx = workspaces.firstIndex(where: { $0.id == workspace.id }) else { return }
+        workspaces[idx] = workspace
+        persistence.save(workspaces)
+    }
+
     // MARK: - Session Persistence
 
     /// Save a workspace's terminal session layout.

@@ -39,15 +39,29 @@ struct WorkspaceRow: View {
     // MARK: - Name and Branch
 
     private var nameAndBranch: some View {
-        VStack(alignment: .leading, spacing: 1) {
+        VStack(alignment: .leading, spacing: 2) {
             Text(workspace.name)
-                .font(.system(.body, design: .default))
+                .font(.system(size: 13, weight: .medium))
                 .lineLimit(1)
 
-            Text(workspace.branch)
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .lineLimit(1)
+            HStack(spacing: 4) {
+                Text(workspace.branch)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                if !workspace.tags.isEmpty {
+                    ForEach(workspace.tags.prefix(2), id: \.self) { tag in
+                        Text(tag)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.1))
+                            .cornerRadius(3)
+                    }
+                }
+            }
         }
     }
 
