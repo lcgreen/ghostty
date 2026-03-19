@@ -411,6 +411,7 @@ struct GitStatusPanel: View {
         let msg = commitMessage
         _ = await GitShell.asyncOutput(["git", "-C", workspace.worktreePath, "commit", "-m", msg])
         commitMessage = ""
+        showingCommit = false
         await loadStatus()
     }
 
