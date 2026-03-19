@@ -70,8 +70,8 @@ class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSMenuIte
         window.toolbarStyle = .unifiedCompact
         window.minSize = NSSize(width: 600, height: 400)
 
-        // Disable native tabs — we use a custom per-workspace tab bar
-        window.tabbingMode = .disallowed
+        // Use native macOS titlebar tabs — same as regular Ghostty windows
+        window.tabbingMode = .automatic
         // Disable macOS window restoration (we handle our own persistence)
         window.isRestorable = false
 
@@ -123,7 +123,6 @@ class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSMenuIte
     @objc private func onGhosttyNewTab(_ notification: Notification) {
         guard let surface = notification.object as? Ghostty.SurfaceView else { return }
         guard let surfaceWindow = surface.window, surfaceWindow == self.window else { return }
-        // Route to custom tab creation, not native tabs
         newTab(nil)
     }
 
@@ -206,21 +205,34 @@ class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSMenuIte
         return true
     }
 
-    // MARK: - New Tab (custom tab bar, NOT native macOS tabs)
+    // MARK: - New Tab (native macOS titlebar tabs)
 
-    /// Intercept Cmd+T — create a custom workspace tab, not a native tab.
+    /// Cmd+T — create a new native tab in the same window tab group.
     @IBAction func newTab(_ sender: Any?) {
-        NotificationCenter.default.post(name: .ghostsetNewWorkspaceTab, object: nil)
+        createNativeTab(agent: nil)
     }
 
-    /// Agents are launched via custom tabs, not native window tabs.
+    /// Launch an agent in a new native tab.
     func newTabWithAgent(_ agent: AgentType) {
-        // Post notification with agent info — handled by WorkspaceWindow
-        NotificationCenter.default.post(
-            name: .ghostsetNewWorkspaceTab,
-            object: nil,
-            userInfo: ["agent": agent]
+        createNativeTab(agent: agent)
+    }
+
+    /// Creates a new WorkspaceWindowController and adds it as a native tabbed window.
+    private func createNativeTab(agent: AgentType?) {
+        guard let parentWindow = window else { return }
+
+        let controller = WorkspaceWindowController(
+            ghostty,
+            workspaceID: selectedWorkspaceID,
+            agent: agent
         )
+
+        guard let newWindow = controller.window else { return }
+        controller.showWindow(nil)
+
+        // Add to the same tab group as this window
+        parentWindow.addTabbedWindow(newWindow, ordered: .above)
+        newWindow.makeKeyAndOrderFront(nil)
     }
 
     // MARK: - NSWindowDelegate

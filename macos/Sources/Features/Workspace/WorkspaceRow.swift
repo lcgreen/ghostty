@@ -4,8 +4,10 @@ import SwiftUI
 struct WorkspaceRow: View {
     let workspace: Workspace
     let tagLookup: (String) -> TagDefinition
+    var hasUnread: Bool = false
 
     @State private var changeStats: WorkspaceChangeStats = .zero
+    @State private var isAnimatingStatus = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
@@ -14,9 +16,16 @@ struct WorkspaceRow: View {
 
             // Name + branch + tags
             VStack(alignment: .leading, spacing: 2) {
-                Text(workspace.name)
-                    .font(.system(size: 13, weight: .medium))
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    if workspace.isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 8))
+                            .foregroundColor(.orange.opacity(0.7))
+                    }
+                    Text(workspace.name)
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1)
+                }
 
                 // Branch (only if different from name)
                 if abbreviatedBranch != workspace.name {
@@ -47,8 +56,15 @@ struct WorkspaceRow: View {
             // Status + stats
             VStack(alignment: .trailing, spacing: 3) {
                 Circle()
-                    .fill(statusColor)
+                    .fill(hasUnread ? Color.orange : statusColor)
                     .frame(width: 6, height: 6)
+                    .scaleEffect(isAnimatingStatus ? 1.5 : 1.0)
+                    .animation(
+                        isAnimatingStatus
+                            ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true)
+                            : .default,
+                        value: isAnimatingStatus
+                    )
 
                 if changeStats != .zero {
                     HStack(spacing: 2) {
@@ -66,8 +82,13 @@ struct WorkspaceRow: View {
             }
         }
         .padding(.vertical, 6)
-        .task {
+        .opacity(workspace.isArchived ? 0.5 : 1.0)
+        .help(hoverTooltip)
+        .task(id: workspace.id) {
             await loadChangeStats()
+        }
+        .onChange(of: hasUnread) { newValue in
+            isAnimatingStatus = newValue
         }
     }
 
@@ -78,7 +99,7 @@ struct WorkspaceRow: View {
             if let agent = workspace.agent {
                 Image(systemName: agent.iconName)
                     .font(.system(size: 11))
-                    .foregroundColor(agentColor(agent).opacity(0.9))
+                    .foregroundColor(AgentColors.color(for: agent).opacity(0.9))
             } else {
                 Image(systemName: "terminal")
                     .font(.system(size: 11))
@@ -122,16 +143,13 @@ struct WorkspaceRow: View {
         }
     }
 
-    private func agentColor(_ agent: AgentType) -> Color {
-        switch agent {
-        case .claude: return .orange
-        case .codex: return .green
-        case .copilot: return .indigo
-        case .opencode: return .teal
-        case .gemini: return .blue
-        case .cursor: return .purple
-        case .custom: return .secondary
+    private var hoverTooltip: String {
+        var parts = ["Branch: \(workspace.branch)"]
+        if changeStats != .zero {
+            parts.append("\(changeStats.filesChanged) files, +\(changeStats.additions) -\(changeStats.deletions)")
         }
+        parts.append("Status: \(workspace.status.displayLabel)")
+        return parts.joined(separator: "\n")
     }
 
     // MARK: - Git Stats
@@ -140,42 +158,7 @@ struct WorkspaceRow: View {
         let worktreePath = workspace.worktreePath
         guard FileManager.default.fileExists(atPath: worktreePath) else { return }
 
-        let stats: WorkspaceChangeStats = await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
-                let process = Process()
-                let pipe = Pipe()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                process.arguments = ["git", "-C", worktreePath, "diff", "--shortstat"]
-                process.standardOutput = pipe
-                process.standardError = FileHandle.nullDevice
-
-                do {
-                    try process.run()
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    process.waitUntilExit()
-                    let output = String(data: data, encoding: .utf8) ?? ""
-                    continuation.resume(returning: self.parseShortstat(output))
-                } catch {
-                    continuation.resume(returning: .zero)
-                }
-            }
-        }
-        changeStats = stats
-    }
-
-    private func parseShortstat(_ output: String) -> WorkspaceChangeStats {
-        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return .zero }
-
-        var adds = 0, dels = 0, files = 0
-        let parts = trimmed.components(separatedBy: ", ")
-        for part in parts {
-            let tokens = part.trimmingCharacters(in: .whitespaces).components(separatedBy: " ")
-            guard let num = Int(tokens.first ?? "") else { continue }
-            if part.contains("file") { files = num }
-            else if part.contains("insertion") { adds = num }
-            else if part.contains("deletion") { dels = num }
-        }
-        return WorkspaceChangeStats(additions: adds, deletions: dels, filesChanged: files)
+        guard let output = await GitShell.asyncOutput(["git", "-C", worktreePath, "diff", "--shortstat"]) else { return }
+        changeStats = GitShell.parseShortstat(output)
     }
 }

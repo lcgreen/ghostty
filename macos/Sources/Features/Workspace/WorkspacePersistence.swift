@@ -51,16 +51,56 @@ final class WorkspacePersistence {
         }
     }
 
+    // MARK: - Environment Profiles (global)
+
+    func loadEnvironmentProfiles() -> [EnvironmentProfile] {
+        guard let data = FileManager.default.contents(atPath: statePath) else { return [] }
+        do {
+            let state = try decoder.decode(PersistedState.self, from: data)
+            return state.environmentProfiles ?? []
+        } catch { return [] }
+    }
+
+    func loadActiveProfileID() -> UUID? {
+        guard let data = FileManager.default.contents(atPath: statePath) else { return nil }
+        return (try? decoder.decode(PersistedState.self, from: data))?.activeProfileID
+    }
+
+    func saveEnvironmentProfiles(_ profiles: [EnvironmentProfile], activeProfileID: UUID?) {
+        let workspaces = load()
+        let tags = loadTagDefinitions()
+        let state = PersistedState(
+            lastUpdated: Date(),
+            workspaces: workspaces,
+            tagDefinitions: tags,
+            cleanShutdown: true,
+            environmentProfiles: profiles.isEmpty ? nil : profiles,
+            activeProfileID: activeProfileID
+        )
+        do {
+            let data = try encoder.encode(state)
+            let dir = (statePath as NSString).deletingLastPathComponent
+            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            try data.write(to: URL(fileURLWithPath: statePath))
+        } catch {
+            print("[WorkspacePersistence] Failed to save env profiles: \(error)")
+        }
+    }
+
     // MARK: - Save
 
     func save(_ workspaces: [Workspace], tagDefinitions: [TagDefinition]? = nil) {
         // Preserve existing tag definitions if not explicitly provided
         let tags = tagDefinitions ?? loadTagDefinitions()
+        let profiles = loadEnvironmentProfiles()
+        let profileID = loadActiveProfileID()
         let state = PersistedState(
-            version: 2,
             lastUpdated: Date(),
             workspaces: workspaces,
-            tagDefinitions: tags
+            tagDefinitions: tags,
+            cleanShutdown: true,
+            environmentProfiles: profiles.isEmpty ? nil : profiles,
+            activeProfileID: profileID
         )
         do {
             let data = try encoder.encode(state)
@@ -170,11 +210,21 @@ private struct PersistedState: Codable {
     let lastUpdated: Date
     let workspaces: [Workspace]
     var tagDefinitions: [TagDefinition]?
+    var cleanShutdown: Bool?
+    var environmentProfiles: [EnvironmentProfile]?
+    var activeProfileID: UUID?
 
-    init(version: Int, lastUpdated: Date, workspaces: [Workspace], tagDefinitions: [TagDefinition] = []) {
+    static let currentVersion = 4
+
+    init(version: Int = Self.currentVersion, lastUpdated: Date, workspaces: [Workspace],
+         tagDefinitions: [TagDefinition] = [], cleanShutdown: Bool = true,
+         environmentProfiles: [EnvironmentProfile]? = nil, activeProfileID: UUID? = nil) {
         self.version = version
         self.lastUpdated = lastUpdated
         self.workspaces = workspaces
         self.tagDefinitions = tagDefinitions
+        self.cleanShutdown = cleanShutdown
+        self.environmentProfiles = environmentProfiles
+        self.activeProfileID = activeProfileID
     }
 }

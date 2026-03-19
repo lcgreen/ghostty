@@ -13,6 +13,8 @@ struct WorkspaceWindow: View {
     @State private var selectedWorkspaceID: UUID?
     @State private var columnVisibility: NavigationSplitViewVisibility = .doubleColumn
     @State private var isReady = false
+    @State private var showingCommandPalette = false
+    @State private var showingGitPanel = false
     @StateObject private var vmCache = WorkspaceViewModelCache()
     @StateObject private var splitDelegate = WorkspaceSplitDelegate()
 
@@ -47,8 +49,11 @@ struct WorkspaceWindow: View {
                     bindActiveViewModel()
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .ghostsetNewWorkspaceTab)) { notification in
+                    // Native tabs now handle this via WorkspaceWindowController
                     let agent = notification.userInfo?["agent"] as? AgentType
-                    addNewTab(agent: agent)
+                    if let agent {
+                        launchAgent(agent)
+                    }
                 }
             } else {
                 WelcomeView()
@@ -56,6 +61,28 @@ struct WorkspaceWindow: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .ghostsetSaveSession)) { _ in
             saveAllSessions()
+        }
+        .overlay {
+            if showingCommandPalette {
+                Color.black.opacity(0.3)
+                    .ignoresSafeArea()
+                    .onTapGesture { showingCommandPalette = false }
+                VStack {
+                    WorkspaceCommandPalette(
+                        manager: ghostty.workspaceManager,
+                        selectedWorkspaceID: $selectedWorkspaceID,
+                        isPresented: $showingCommandPalette
+                    )
+                    .padding(.top, 60)
+                    Spacer()
+                }
+            }
+        }
+        .background {
+            // Cmd+K shortcut to toggle command palette
+            Button("") { showingCommandPalette.toggle() }
+                .keyboardShortcut("k", modifiers: .command)
+                .hidden()
         }
     }
 
@@ -131,22 +158,10 @@ struct WorkspaceWindow: View {
     // MARK: - Agent Launch
 
     private func launchAgent(_ agent: AgentType) {
-        guard let app = ghostty.app else { return }
-        let workspace = selectedWorkspace
-        let config: Ghostty.SurfaceConfiguration? = workspace.map {
-            WorkspaceWindowController.surfaceConfiguration(for: $0)
-        }
-        let entry = vmCache.createTab(
-            for: workspace, app: app, baseConfig: config,
-            title: agent.displayName, agent: agent
-        )
-        bindActiveViewModel()
-
-        // Try to capture the agent's session ID after it starts
-        let tabID = entry.id
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak vmCache] in
-            guard let group = vmCache?.tabGroup(for: workspace, app: app, baseConfig: config) else { return }
-            group.captureSessionID(for: tabID)
+        // Create a native tab with the agent — the WorkspaceWindowController handles this
+        if let window = NSApp.keyWindow,
+           let controller = window.windowController as? WorkspaceWindowController {
+            controller.newTabWithAgent(agent)
         }
     }
 
@@ -175,7 +190,7 @@ struct WorkspaceWindow: View {
 // MARK: - Detail Content (observes tab group changes)
 
 /// Inner view that uses @ObservedObject on the tab group so SwiftUI
-/// re-renders when tabs are added/removed/switched.
+/// re-renders when the terminal changes.
 private struct WorkspaceDetailContent: View {
     @ObservedObject var tabGroup: WorkspaceTabGroup
     let splitDelegate: WorkspaceSplitDelegate
@@ -187,13 +202,7 @@ private struct WorkspaceDetailContent: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Tab bar — only when 2+ tabs
-            if tabGroup.tabs.count > 1 {
-                WorkspaceTabBar(tabGroup: tabGroup, onClose: onCloseTab)
-                Divider()
-            }
-
-            // Terminal for active tab
+            // Terminal — single terminal per native tab (no custom tab bar)
             if let vm = tabGroup.activeViewModel, !vm.surfaceTree.isEmpty {
                 TerminalView(
                     ghostty: ghostty,

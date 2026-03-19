@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// The left sidebar showing all active workspaces with search and tag filtering.
 struct WorkspaceSidebar: View {
     @ObservedObject var manager: WorktreeManager
     @Binding var selectedWorkspaceID: UUID?
@@ -14,6 +13,15 @@ struct WorkspaceSidebar: View {
     @State private var showingNewTag = false
     @State private var newTagName = ""
     @State private var newTagColor = "blue"
+    @State private var showingGitPanel = false
+    @State private var showingDiffView = false
+    @State private var showingTemplates = false
+    @State private var settingsWorkspace: Workspace?
+    @State private var sortOrder: WorkspaceSortOrder = .manual
+    @State private var workspaceFilter: WorkspaceFilter = .active
+    @State private var renamingWorkspace: Workspace?
+    @State private var renameText = ""
+    @State private var multiSelection: Set<UUID> = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,14 +29,82 @@ struct WorkspaceSidebar: View {
             if showingSearch {
                 searchBar
                 tagBar
+                Picker("Filter", selection: $workspaceFilter) {
+                    ForEach(WorkspaceFilter.allCases, id: \.self) { filter in
+                        Text(filter.rawValue).tag(filter)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.small)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 4)
             }
             Divider().opacity(0.4).padding(.top, 4).padding(.bottom, 6)
             workspaceList
+
+            if let ws = selectedWorkspace, showingGitPanel {
+                Divider().opacity(0.3)
+                GitStatusPanel(workspace: ws)
+            }
         }
         .frame(minWidth: 220)
+        .onChange(of: selectedWorkspaceID) { newID in
+            if let id = newID {
+                manager.notifier.markRead(workspaceID: id)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            manager.refreshStats()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ghostset.showDiffView"))) { _ in
+            showingDiffView = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ghostset.showTemplates"))) { _ in
+            showingTemplates = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ghostset.toggleGitPanel"))) { _ in
+            showingGitPanel.toggle()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ghostset.toggleSearch"))) { _ in
+            withAnimation(.easeInOut(duration: 0.15)) { showingSearch.toggle() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ghostset.sortWorkspaces"))) { notification in
+            if let sort = notification.userInfo?["sort"] as? String {
+                switch sort {
+                case "name": sortOrder = .name
+                case "dateCreated": sortOrder = .dateCreated
+                default: sortOrder = .manual
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ghostset.filterWorkspaces"))) { notification in
+            if let filter = notification.userInfo?["filter"] as? String {
+                switch filter {
+                case "active": workspaceFilter = .active
+                case "archived": workspaceFilter = .archived
+                default: workspaceFilter = .all
+                }
+            }
+        }
         .sheet(isPresented: $showingNewWorkspace) {
             NewWorkspaceSheet(manager: manager) { workspace in
                 selectedWorkspaceID = workspace.id
+            }
+        }
+        .sheet(isPresented: $showingDiffView) {
+            WorkspaceDiffView(manager: manager)
+        }
+        .sheet(isPresented: $showingTemplates) {
+            TemplateManagerView(manager: manager)
+        }
+        .popover(
+            isPresented: .init(
+                get: { settingsWorkspace != nil },
+                set: { if !$0 { settingsWorkspace = nil } }
+            )
+        ) {
+            if let ws = settingsWorkspace {
+                WorkspaceSettingsPopover(manager: manager, workspace: ws)
             }
         }
         .alert(
@@ -53,17 +129,45 @@ struct WorkspaceSidebar: View {
     // MARK: - Filtered Workspaces
 
     private var filteredWorkspaces: [Workspace] {
-        manager.workspaces.filter { ws in
-            let matchesSearch = searchText.isEmpty ||
-                ws.name.localizedCaseInsensitiveContains(searchText) ||
-                ws.branch.localizedCaseInsensitiveContains(searchText) ||
-                ws.tags.contains { $0.localizedCaseInsensitiveContains(searchText) }
+        let filtered = manager.workspaces.filter { ws in
+            let matchesArchive = workspaceFilter == .all ||
+                (workspaceFilter == .active && !ws.isArchived) ||
+                (workspaceFilter == .archived && ws.isArchived)
+            guard matchesArchive else { return false }
 
-            let matchesTag = selectedTag == nil ||
-                ws.tags.contains(selectedTag!)
+            let matchesTag = selectedTag == nil || ws.tags.contains(selectedTag!)
+            guard matchesTag else { return false }
 
-            return matchesSearch && matchesTag
+            guard !searchText.isEmpty else { return true }
+            let scores: [Int] = [
+                FuzzyMatch.score(query: searchText, target: ws.name) ?? 0,
+                FuzzyMatch.score(query: searchText, target: ws.branch) ?? 0,
+                ws.tags.compactMap { FuzzyMatch.score(query: searchText, target: $0) }.max() ?? 0
+            ]
+            return (scores.max() ?? 0) > 0
         }
+        return filtered.sorted { (lhs: Workspace, rhs: Workspace) -> Bool in
+            if lhs.isPinned != rhs.isPinned {
+                return lhs.isPinned
+            }
+            switch sortOrder {
+            case .manual:
+                return lhs.sortOrder < rhs.sortOrder
+            case .name:
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            case .dateCreated:
+                return lhs.createdAt > rhs.createdAt
+            case .status:
+                return lhs.status.displayLabel < rhs.status.displayLabel
+            case .changeCount:
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+        }
+    }
+
+    private var selectedWorkspace: Workspace? {
+        guard let id = selectedWorkspaceID else { return nil }
+        return manager.workspaces.first { $0.id == id }
     }
 
     private var allTags: [String] {
@@ -82,7 +186,10 @@ struct WorkspaceSidebar: View {
             Button {
                 withAnimation(.easeInOut(duration: 0.15)) {
                     showingSearch.toggle()
-                    if !showingSearch { searchText = "" }
+                    if !showingSearch {
+                        searchText = ""
+                        workspaceFilter = .active
+                    }
                 }
             } label: {
                 Image(systemName: "magnifyingglass")
@@ -90,27 +197,17 @@ struct WorkspaceSidebar: View {
                     .foregroundStyle(showingSearch ? .primary : .secondary)
             }
             .buttonStyle(.plain)
-            Menu {
-                Button {
-                    showingNewWorkspace = true
-                } label: {
-                    Label("New Workspace", systemImage: "plus.rectangle.on.rectangle")
-                }
-                Divider()
-                Button {
-                    newTagName = ""
-                    newTagColor = "blue"
-                    showingNewTag = true
-                } label: {
-                    Label("New Tag", systemImage: "tag")
-                }
+            sortMenuButton
+            Button {
+                showingGitPanel.toggle()
             } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 10))
+                    .foregroundStyle(showingGitPanel ? .primary : .secondary)
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
+            .buttonStyle(.plain)
+            .help("Toggle git changes")
+            addMenu
         }
         .padding(.horizontal, 12)
         .padding(.top, 6)
@@ -118,6 +215,65 @@ struct WorkspaceSidebar: View {
         .popover(isPresented: $showingNewTag) {
             newTagPopover
         }
+    }
+
+    private var sortMenuButton: some View {
+        Menu {
+            ForEach(WorkspaceSortOrder.allCases, id: \.rawValue) { order in
+                Button {
+                    sortOrder = order
+                } label: {
+                    HStack {
+                        Text(order.rawValue)
+                        if sortOrder == order {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "arrow.up.arrow.down")
+                .font(.system(size: 10))
+                .foregroundStyle(sortOrder == .manual ? .secondary : .primary)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Sort workspaces")
+    }
+
+    private var addMenu: some View {
+        Menu {
+            Button {
+                showingNewWorkspace = true
+            } label: {
+                Label("New Workspace", systemImage: "plus.rectangle.on.rectangle")
+            }
+            Divider()
+            Button {
+                newTagName = ""
+                newTagColor = "blue"
+                showingNewTag = true
+            } label: {
+                Label("New Tag", systemImage: "tag")
+            }
+            Button {
+                showingTemplates = true
+            } label: {
+                Label("Manage Templates", systemImage: "doc.on.doc")
+            }
+            Divider()
+            Button {
+                showingDiffView = true
+            } label: {
+                Label("Compare All Workspaces", systemImage: "square.split.2x1")
+            }
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
     }
 
     // MARK: - Search Bar
@@ -159,14 +315,20 @@ struct WorkspaceSidebar: View {
             HStack(spacing: 4) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 4) {
-                        tagBarPill("All", color: .secondary, isSelected: selectedTag == nil) {
+                        tagBarPill("All", color: .secondary, iconName: nil, count: nil, isSelected: selectedTag == nil) {
                             selectedTag = nil
                         }
 
-                        let displayTags = orderedDisplayTags
-                        ForEach(displayTags, id: \.self) { tagName in
+                        ForEach(allTags, id: \.self) { tagName in
                             let def = manager.tagDefinition(for: tagName)
-                            tagBarPill(tagName, color: def.color, isSelected: selectedTag == tagName) {
+                            let count = TagDefinition.usageCount(for: tagName, in: manager.workspaces)
+                            tagBarPill(
+                                tagName,
+                                color: def.color,
+                                iconName: def.iconName,
+                                count: count > 0 ? count : nil,
+                                isSelected: selectedTag == tagName
+                            ) {
                                 selectedTag = selectedTag == tagName ? nil : tagName
                             }
                         }
@@ -178,22 +340,35 @@ struct WorkspaceSidebar: View {
         }
     }
 
-    /// Only show tags that are actually applied to workspaces.
-    private var orderedDisplayTags: [String] {
-        allTags
-    }
-
-    private func tagBarPill(_ label: String, color: Color, isSelected: Bool, action: @escaping () -> Void) -> some View {
+    private func tagBarPill(
+        _ label: String,
+        color: Color,
+        iconName: String?,
+        count: Int?,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
-            Text(label)
-                .font(.system(size: 10, weight: isSelected ? .medium : .regular))
-                .foregroundColor(isSelected ? .primary : .secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(
-                    Capsule()
-                        .fill(isSelected ? color.opacity(0.15) : Color.primary.opacity(0.04))
-                )
+            HStack(spacing: 3) {
+                if let icon = iconName {
+                    Image(systemName: icon)
+                        .font(.system(size: 8))
+                }
+                Text(label)
+                    .font(.system(size: 10, weight: isSelected ? .medium : .regular))
+                if let count {
+                    Text("\(count)")
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .foregroundColor(isSelected ? .primary : .secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(
+                Capsule()
+                    .fill(isSelected ? color.opacity(0.15) : Color.primary.opacity(0.04))
+            )
         }
         .buttonStyle(.plain)
     }
@@ -209,21 +384,9 @@ struct WorkspaceSidebar: View {
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 12))
 
-            // Color grid
             LazyVGrid(columns: Array(repeating: GridItem(.fixed(24), spacing: 6), count: 5), spacing: 6) {
                 ForEach(TagDefinition.availableColors, id: \.name) { colorOption in
-                    let isChosen = newTagColor == colorOption.name
-                    Circle()
-                        .fill(TagDefinition.swiftUIColor(for: colorOption.name))
-                        .frame(width: 20, height: 20)
-                        .overlay(
-                            Circle()
-                                .strokeBorder(Color.white, lineWidth: isChosen ? 2 : 0)
-                        )
-                        .shadow(color: isChosen ? TagDefinition.swiftUIColor(for: colorOption.name).opacity(0.5) : .clear, radius: 3)
-                        .onTapGesture {
-                            newTagColor = colorOption.name
-                        }
+                    colorSwatch(colorOption.name, isChosen: newTagColor == colorOption.name)
                 }
             }
 
@@ -259,47 +422,67 @@ struct WorkspaceSidebar: View {
         List(selection: $selectedWorkspaceID) {
             if filteredWorkspaces.isEmpty {
                 if manager.workspaces.isEmpty {
-                    emptyState
+                    emptyPlaceholder(icon: "rectangle.stack.badge.plus", message: "No workspaces")
                 } else {
-                    noResultsState
+                    emptyPlaceholder(icon: "magnifyingglass", message: "No matches")
                 }
             } else {
                 ForEach(filteredWorkspaces) { workspace in
-                    WorkspaceRow(
-                        workspace: workspace,
-                        tagLookup: { manager.tagDefinition(for: $0) }
-                    )
-                    .tag(workspace.id)
-                    .contextMenu { contextMenu(for: workspace) }
+                    workspaceRowView(for: workspace)
+                        .tag(workspace.id)
+                        .contextMenu { contextMenu(for: workspace) }
+                        .onTapGesture(count: 2) {
+                            renamingWorkspace = workspace
+                            renameText = workspace.name
+                        }
+                }
+                .onMove { indices, destination in
+                    manager.moveWorkspaces(from: indices, to: destination)
                 }
             }
         }
         .listStyle(.sidebar)
     }
 
-    // MARK: - Empty States
-
-    private var emptyState: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "rectangle.stack.badge.plus")
-                .font(.title2)
-                .foregroundStyle(.tertiary)
-            Text("No workspaces")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+    @ViewBuilder
+    private func workspaceRowView(for workspace: Workspace) -> some View {
+        if renamingWorkspace?.id == workspace.id {
+            renameField(for: workspace)
+        } else {
+            WorkspaceRow(
+                workspace: workspace,
+                tagLookup: { manager.tagDefinition(for: $0) },
+                hasUnread: manager.notifier.unreadWorkspaces.contains(workspace.id)
+            )
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 32)
     }
 
-    private var noResultsState: some View {
+    private func renameField(for workspace: Workspace) -> some View {
+        TextField("Name", text: $renameText, onCommit: {
+            commitRename(for: workspace)
+        })
+        .textFieldStyle(.plain)
+        .font(.system(size: 12))
+        .onExitCommand {
+            renamingWorkspace = nil
+        }
+    }
+
+    private func commitRename(for workspace: Workspace) {
+        let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty, trimmed != workspace.name {
+            let renamed = workspace.renamed(to: trimmed)
+            manager.updateWorkspace(renamed)
+        }
+        renamingWorkspace = nil
+    }
+
+    // MARK: - Empty States
+
+    private func emptyPlaceholder(icon: String, message: String) -> some View {
         VStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.title2)
-                .foregroundStyle(.tertiary)
-            Text("No matches")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+            Image(systemName: icon).font(.title2).foregroundStyle(.tertiary)
+            Text(message).font(.system(size: 12)).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 32)
@@ -315,7 +498,16 @@ struct WorkspaceSidebar: View {
 
         Divider()
 
-        // Tag management with colors
+        Button(workspace.isPinned ? "Unpin" : "Pin to Top") {
+            manager.updateWorkspace(workspace.toggledPin())
+        }
+
+        Button(workspace.isArchived ? "Unarchive" : "Archive") {
+            manager.updateWorkspace(workspace.toggledArchive())
+        }
+
+        Divider()
+
         Menu("Tags") {
             ForEach(manager.tagDefinitions) { def in
                 Button {
@@ -345,6 +537,14 @@ struct WorkspaceSidebar: View {
 
         Divider()
 
+        Button("Settings...") {
+            settingsWorkspace = workspace
+        }
+
+        Button("Save as Template") {
+            manager.saveAsTemplate(workspace)
+        }
+
         Button("Open in VS Code") {
             openInEditor("Visual Studio Code", path: workspace.worktreePath)
         }
@@ -369,25 +569,16 @@ struct WorkspaceSidebar: View {
 
     @ViewBuilder
     private var deleteAlert: some View {
-        if deleteFromDisk {
-            Button("Delete", role: .destructive) {
-                if let ws = workspaceToDelete {
-                    Task {
-                        try? await manager.deleteWorkspace(ws)
-                        if selectedWorkspaceID == ws.id {
-                            selectedWorkspaceID = manager.workspaces.first?.id
-                        }
-                    }
+        Button(deleteFromDisk ? "Delete" : "Remove", role: .destructive) {
+            guard let ws = workspaceToDelete else { return }
+            if deleteFromDisk {
+                Task {
+                    try? await manager.deleteWorkspace(ws)
+                    if selectedWorkspaceID == ws.id { selectedWorkspaceID = manager.workspaces.first?.id }
                 }
-            }
-        } else {
-            Button("Remove", role: .destructive) {
-                if let ws = workspaceToDelete {
-                    manager.untrackWorkspace(ws)
-                    if selectedWorkspaceID == ws.id {
-                        selectedWorkspaceID = manager.workspaces.first?.id
-                    }
-                }
+            } else {
+                manager.untrackWorkspace(ws)
+                if selectedWorkspaceID == ws.id { selectedWorkspaceID = manager.workspaces.first?.id }
             }
         }
         Button("Cancel", role: .cancel) {}
@@ -407,6 +598,16 @@ struct WorkspaceSidebar: View {
     }
 
     // MARK: - Helpers
+
+    private func colorSwatch(_ name: String, isChosen: Bool) -> some View {
+        let swatchColor = TagDefinition.swiftUIColor(for: name)
+        return Circle()
+            .fill(swatchColor)
+            .frame(width: 20, height: 20)
+            .overlay(Circle().strokeBorder(Color.white, lineWidth: isChosen ? 2 : 0))
+            .shadow(color: isChosen ? swatchColor.opacity(0.5) : .clear, radius: 3)
+            .onTapGesture { newTagColor = name }
+    }
 
     private func openInEditor(_ appName: String, path: String) {
         let url = URL(fileURLWithPath: path)

@@ -17,6 +17,11 @@ final class WorktreeManager: ObservableObject {
     @Published private(set) var workspaces: [Workspace] = []
     @Published private(set) var isCreating = false
     @Published var tagDefinitions: [TagDefinition] = []
+    @Published var templates: [WorkspaceTemplate] = []
+    @Published var environmentProfiles: [EnvironmentProfile] = []
+    @Published var activeProfileID: UUID?
+
+    let notifier = WorkspaceNotifier()
 
     // MARK: - Configuration
 
@@ -37,6 +42,39 @@ final class WorktreeManager: ObservableObject {
         self.persistence = WorkspacePersistence()
         self.workspaces = persistence.load()
         self.tagDefinitions = persistence.loadTagDefinitions()
+        self.templates = templatePersistence.load()
+        self.environmentProfiles = persistence.loadEnvironmentProfiles()
+        self.activeProfileID = persistence.loadActiveProfileID()
+        startAutoSave()
+        detectCrashRecovery()
+    }
+
+    private let templatePersistence = TemplatePersistence()
+    private var autoSaveTimer: Timer?
+
+    /// Periodically save state every 60 seconds.
+    private func startAutoSave() {
+        autoSaveTimer?.invalidate()
+        autoSaveTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            self?.saveInBackground()
+        }
+    }
+
+    /// Detect unclean shutdown and log a warning.
+    private func detectCrashRecovery() {
+        let key = "ghostset.cleanShutdown"
+        let wasClean = UserDefaults.standard.bool(forKey: key)
+        if !wasClean && !workspaces.isEmpty {
+            logger.warning("Detected unclean shutdown — previous session may need recovery")
+        }
+        UserDefaults.standard.set(false, forKey: key)
+    }
+
+    /// Mark clean shutdown (call on app termination).
+    func markCleanShutdown() {
+        UserDefaults.standard.set(true, forKey: "ghostset.cleanShutdown")
+        saveInBackground()
+        autoSaveTimer?.invalidate()
     }
 
     // MARK: - Update Workspace
@@ -46,6 +84,47 @@ final class WorktreeManager: ObservableObject {
         guard let idx = workspaces.firstIndex(where: { $0.id == workspace.id }) else { return }
         workspaces[idx] = workspace
         saveInBackground()
+    }
+
+    // MARK: - Environment Profiles (global)
+
+    /// The currently active environment profile.
+    var activeProfile: EnvironmentProfile? {
+        guard let id = activeProfileID else { return nil }
+        return environmentProfiles.first { $0.id == id }
+    }
+
+    /// The effective env vars: active profile's variables.
+    var activeEnvironmentVariables: [String: String] {
+        activeProfile?.variables ?? [:]
+    }
+
+    func saveEnvironmentProfiles() {
+        let profiles = environmentProfiles
+        let profileID = activeProfileID
+        DispatchQueue.global(qos: .utility).async { [persistence] in
+            persistence.saveEnvironmentProfiles(profiles, activeProfileID: profileID)
+        }
+    }
+
+    func setActiveProfile(_ profileID: UUID?) {
+        activeProfileID = profileID
+        saveEnvironmentProfiles()
+    }
+
+    func upsertEnvironmentProfile(_ profile: EnvironmentProfile) {
+        if let idx = environmentProfiles.firstIndex(where: { $0.id == profile.id }) {
+            environmentProfiles[idx] = profile
+        } else {
+            environmentProfiles.append(profile)
+        }
+        saveEnvironmentProfiles()
+    }
+
+    func removeEnvironmentProfile(_ profile: EnvironmentProfile) {
+        environmentProfiles.removeAll { $0.id == profile.id }
+        if activeProfileID == profile.id { activeProfileID = nil }
+        saveEnvironmentProfiles()
     }
 
     // MARK: - Tag Registry
@@ -243,6 +322,12 @@ final class WorktreeManager: ObservableObject {
         }
     }
 
+    /// Triggers a UI refresh — publishes change to drive SwiftUI re-renders.
+    /// Views that display git stats will reload via their `.task` modifiers.
+    func refreshStats() {
+        objectWillChange.send()
+    }
+
     // MARK: - Git Operations (private)
 
     private func gitWorktreeAdd(
@@ -329,6 +414,93 @@ final class WorktreeManager: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Reorder workspaces via drag & drop.
+    func moveWorkspaces(from source: IndexSet, to destination: Int) {
+        workspaces.move(fromOffsets: source, toOffset: destination)
+        saveInBackground()
+    }
+
+    // MARK: - Rename Workspace
+
+    func renameWorkspace(_ workspace: Workspace, to newName: String) {
+        let updated = workspace.renamed(to: newName)
+        updateWorkspace(updated)
+    }
+
+    // MARK: - Pin / Archive
+
+    func togglePin(_ workspace: Workspace) {
+        let updated = workspace.toggledPin()
+        updateWorkspace(updated)
+    }
+
+    func toggleArchive(_ workspace: Workspace) {
+        let updated = workspace.toggledArchive()
+        updateWorkspace(updated)
+    }
+
+    // MARK: - Batch Operations
+
+    func batchApplyTags(_ tags: [String], to workspaceIDs: Set<UUID>) {
+        workspaces = workspaces.map { ws in
+            guard workspaceIDs.contains(ws.id) else { return ws }
+            var updated = ws
+            let combined = Set(updated.tags + tags)
+            updated.tags = Array(combined).sorted()
+            return updated
+        }
+        saveInBackground()
+    }
+
+    func batchArchive(_ workspaceIDs: Set<UUID>) {
+        workspaces = workspaces.map { ws in
+            guard workspaceIDs.contains(ws.id) else { return ws }
+            var updated = ws
+            updated.isArchived = true
+            return updated
+        }
+        saveInBackground()
+    }
+
+    func batchDelete(_ workspaceIDs: Set<UUID>) async {
+        for id in workspaceIDs {
+            guard let ws = workspaces.first(where: { $0.id == id }) else { continue }
+            try? await deleteWorkspace(ws)
+        }
+    }
+
+    // MARK: - Template Management
+
+    func saveTemplate(_ template: WorkspaceTemplate) {
+        if let idx = templates.firstIndex(where: { $0.id == template.id }) {
+            templates[idx] = template
+        } else {
+            templates.append(template)
+        }
+        DispatchQueue.global(qos: .utility).async { [templatePersistence, templates] in
+            templatePersistence.save(templates)
+        }
+    }
+
+    func removeTemplate(_ template: WorkspaceTemplate) {
+        templates.removeAll { $0.id == template.id }
+        DispatchQueue.global(qos: .utility).async { [templatePersistence, templates] in
+            templatePersistence.save(templates)
+        }
+    }
+
+    func replaceAllTemplates(_ newTemplates: [WorkspaceTemplate]) {
+        templates = newTemplates
+        DispatchQueue.global(qos: .utility).async { [templatePersistence, templates] in
+            templatePersistence.save(templates)
+        }
+    }
+
+    func saveAsTemplate(_ workspace: Workspace) {
+        let template = WorkspaceTemplate.from(workspace: workspace)
+        saveTemplate(template)
     }
 
     // MARK: - Background Persistence

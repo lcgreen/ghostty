@@ -5,6 +5,8 @@ import SwiftUI
 struct TagDefinition: Codable, Identifiable, Hashable {
     let name: String
     var colorName: String
+    var iconName: String?
+    var parentTag: String?
 
     var id: String { name }
 
@@ -12,14 +14,38 @@ struct TagDefinition: Codable, Identifiable, Hashable {
         Self.swiftUIColor(for: colorName)
     }
 
+    /// Display name showing hierarchy (e.g., "frontend/react").
+    var displayName: String {
+        if let parent = parentTag {
+            return "\(parent)/\(name)"
+        }
+        return name
+    }
+
+    init(name: String, colorName: String, iconName: String? = nil, parentTag: String? = nil) {
+        self.name = name
+        self.colorName = colorName
+        self.iconName = iconName
+        self.parentTag = parentTag
+    }
+
+    // Backward-compatible decoding
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        colorName = try container.decode(String.self, forKey: .colorName)
+        iconName = try container.decodeIfPresent(String.self, forKey: .iconName)
+        parentTag = try container.decodeIfPresent(String.self, forKey: .parentTag)
+    }
+
     // MARK: - Preset Tags
 
     static let presets: [TagDefinition] = [
-        TagDefinition(name: "feature", colorName: "blue"),
-        TagDefinition(name: "bugfix", colorName: "red"),
-        TagDefinition(name: "refactor", colorName: "purple"),
-        TagDefinition(name: "experiment", colorName: "orange"),
-        TagDefinition(name: "review", colorName: "teal"),
+        TagDefinition(name: "feature", colorName: "blue", iconName: "star"),
+        TagDefinition(name: "bugfix", colorName: "red", iconName: "ladybug"),
+        TagDefinition(name: "refactor", colorName: "purple", iconName: "arrow.triangle.2.circlepath"),
+        TagDefinition(name: "experiment", colorName: "orange", iconName: "flask"),
+        TagDefinition(name: "review", colorName: "teal", iconName: "eye"),
     ]
 
     // MARK: - Available Colors
@@ -90,5 +116,48 @@ struct TagDefinition: Codable, Identifiable, Hashable {
             }
         }
         return Array(matched).sorted()
+    }
+
+    /// Detect language tags from repo contents.
+    static func detectLanguageTags(repoPath: String) -> [String] {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(atPath: repoPath) else { return [] }
+        var tags: [String] = []
+
+        let fileSet = Set(contents)
+        if fileSet.contains("package.json") || fileSet.contains("tsconfig.json") {
+            tags.append("javascript")
+        }
+        if fileSet.contains("requirements.txt") || fileSet.contains("pyproject.toml") || fileSet.contains("setup.py") {
+            tags.append("python")
+        }
+        if fileSet.contains("go.mod") {
+            tags.append("go")
+        }
+        if fileSet.contains("Cargo.toml") {
+            tags.append("rust")
+        }
+        if fileSet.contains("build.zig") {
+            tags.append("zig")
+        }
+        if fileSet.contains("Package.swift") {
+            tags.append("swift")
+        }
+        return tags
+    }
+
+    /// Count how many workspaces use this tag.
+    static func usageCount(for tagName: String, in workspaces: [Workspace]) -> Int {
+        workspaces.filter { $0.tags.contains(tagName) }.count
+    }
+
+    /// Pick the next unused color from the available palette.
+    static func nextUnusedColor(usedColors: Set<String>) -> String {
+        for colorOption in availableColors {
+            if !usedColors.contains(colorOption.name) {
+                return colorOption.name
+            }
+        }
+        return availableColors.first?.name ?? "blue"
     }
 }
