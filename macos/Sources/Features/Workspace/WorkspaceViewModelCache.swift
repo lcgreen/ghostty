@@ -99,6 +99,17 @@ final class WorkspaceViewModelCache: ObservableObject {
                     let entry = WorkspaceTabEntry(title: tabState.title, viewModel: vm, agent: tabState.agent, sessionID: tabState.sessionID)
                     group.addTab(entry, activate: i == session.activeTabIndex)
                 }
+            } else if let agent = workspace.agent, workspace.taskDescription != nil {
+                // Auto-launch agent with task for new workspaces
+                var config = baseConfig ?? Ghostty.SurfaceConfiguration()
+                var input = agent.launchCommand
+                if let task = workspace.taskDescription, !task.isEmpty {
+                    input += "\n" + task
+                }
+                config.initialInput = input + "\n"
+                let vm = WorkspaceTerminalViewModel()
+                vm.surfaceTree = SplitTree(view: Ghostty.SurfaceView(app, baseConfig: config))
+                group.addTab(WorkspaceTabEntry(title: agent.displayName, viewModel: vm, agent: agent))
             } else {
                 let vm = createViewModel(app: app, baseConfig: baseConfig, workspace: workspace)
                 group.addTab(WorkspaceTabEntry(title: workspace.name, viewModel: vm))
@@ -122,13 +133,26 @@ final class WorkspaceViewModelCache: ObservableObject {
         app: ghostty_app_t,
         baseConfig: Ghostty.SurfaceConfiguration? = nil,
         title: String = "Shell",
-        agent: AgentType? = nil
+        agent: AgentType? = nil,
+        taskDescription: String? = nil
     ) -> WorkspaceTabEntry {
         let group = tabGroup(for: workspace, app: app, baseConfig: baseConfig)
 
         var config = baseConfig ?? Ghostty.SurfaceConfiguration()
         if let agent {
-            config.initialInput = agent.launchCommand + "\n"
+            var input = agent.launchCommand
+            // If there's a task description, send it as the initial prompt after the agent launches
+            let task = taskDescription ?? workspace?.taskDescription
+            if let task, !task.isEmpty {
+                // For Claude: pass task via -p flag; for others: send as follow-up input
+                switch agent {
+                case .claude:
+                    input = "claude -p \"\(task.replacingOccurrences(of: "\"", with: "\\\""))\""
+                default:
+                    input += "\n" + task
+                }
+            }
+            config.initialInput = input + "\n"
         }
 
         let vm = WorkspaceTerminalViewModel()

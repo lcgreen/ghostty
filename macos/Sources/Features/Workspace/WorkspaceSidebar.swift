@@ -6,32 +6,33 @@ struct WorkspaceSidebar: View {
     @Binding var selectedWorkspaceID: UUID?
 
     @State private var showingNewWorkspace = false
-    @State private var showingNewProject = false
     @State private var workspaceToDelete: Workspace?
+    @State private var deleteFromDisk = false
     @State private var searchText = ""
+    @State private var showingSearch = false
     @State private var selectedTag: String?
+    @State private var showingNewTag = false
+    @State private var newTagName = ""
+    @State private var newTagColor = "blue"
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            searchBar
-            tagBar
-            Divider()
+            if showingSearch {
+                searchBar
+                tagBar
+            }
+            Divider().opacity(0.4).padding(.top, 4).padding(.bottom, 6)
             workspaceList
         }
-        .frame(minWidth: 200)
+        .frame(minWidth: 220)
         .sheet(isPresented: $showingNewWorkspace) {
             NewWorkspaceSheet(manager: manager) { workspace in
                 selectedWorkspaceID = workspace.id
             }
         }
-        .sheet(isPresented: $showingNewProject) {
-            NewProjectSheet(manager: manager) { workspace in
-                selectedWorkspaceID = workspace.id
-            }
-        }
         .alert(
-            "Remove Workspace?",
+            deleteFromDisk ? "Delete Worktree?" : "Remove Workspace?",
             isPresented: .init(
                 get: { workspaceToDelete != nil },
                 set: { if !$0 { workspaceToDelete = nil } }
@@ -40,7 +41,11 @@ struct WorkspaceSidebar: View {
             deleteAlert
         } message: {
             if let ws = workspaceToDelete {
-                Text("This will remove the worktree at \(ws.worktreePath).")
+                if deleteFromDisk {
+                    Text("This will delete the worktree and files at \(ws.worktreePath). This cannot be undone.")
+                } else {
+                    Text("This will stop tracking the workspace. Files at \(ws.worktreePath) will be kept.")
+                }
             }
         }
     }
@@ -74,16 +79,30 @@ struct WorkspaceSidebar: View {
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
             Spacer()
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    showingSearch.toggle()
+                    if !showingSearch { searchText = "" }
+                }
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 10))
+                    .foregroundStyle(showingSearch ? .primary : .secondary)
+            }
+            .buttonStyle(.plain)
             Menu {
                 Button {
                     showingNewWorkspace = true
                 } label: {
                     Label("New Workspace", systemImage: "plus.rectangle.on.rectangle")
                 }
+                Divider()
                 Button {
-                    showingNewProject = true
+                    newTagName = ""
+                    newTagColor = "blue"
+                    showingNewTag = true
                 } label: {
-                    Label("New Project", systemImage: "folder.badge.plus")
+                    Label("New Tag", systemImage: "tag")
                 }
             } label: {
                 Image(systemName: "plus")
@@ -94,7 +113,11 @@ struct WorkspaceSidebar: View {
             .fixedSize()
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.top, 6)
+        .padding(.bottom, 2)
+        .popover(isPresented: $showingNewTag) {
+            newTagPopover
+        }
     }
 
     // MARK: - Search Bar
@@ -133,36 +156,101 @@ struct WorkspaceSidebar: View {
     @ViewBuilder
     private var tagBar: some View {
         if !allTags.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
-                    tagPill("All", isSelected: selectedTag == nil) {
-                        selectedTag = nil
-                    }
-                    ForEach(allTags, id: \.self) { tag in
-                        tagPill(tag, isSelected: selectedTag == tag) {
-                            selectedTag = selectedTag == tag ? nil : tag
+            HStack(spacing: 4) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        tagBarPill("All", color: .secondary, isSelected: selectedTag == nil) {
+                            selectedTag = nil
+                        }
+
+                        let displayTags = orderedDisplayTags
+                        ForEach(displayTags, id: \.self) { tagName in
+                            let def = manager.tagDefinition(for: tagName)
+                            tagBarPill(tagName, color: def.color, isSelected: selectedTag == tagName) {
+                                selectedTag = selectedTag == tagName ? nil : tagName
+                            }
                         }
                     }
                 }
-                .padding(.horizontal, 10)
             }
+            .padding(.horizontal, 10)
             .padding(.bottom, 4)
         }
     }
 
-    private func tagPill(_ label: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+    /// Only show tags that are actually applied to workspaces.
+    private var orderedDisplayTags: [String] {
+        allTags
+    }
+
+    private func tagBarPill(_ label: String, color: Color, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label)
-                .font(.system(size: 10))
-                .foregroundStyle(isSelected ? .primary : .secondary)
+                .font(.system(size: 10, weight: isSelected ? .medium : .regular))
+                .foregroundColor(isSelected ? .primary : .secondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(isSelected ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.05))
+                    Capsule()
+                        .fill(isSelected ? color.opacity(0.15) : Color.primary.opacity(0.04))
                 )
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - New Tag Popover
+
+    private var newTagPopover: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("New Tag")
+                .font(.system(size: 12, weight: .semibold))
+
+            TextField("Tag name", text: $newTagName)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12))
+
+            // Color grid
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(24), spacing: 6), count: 5), spacing: 6) {
+                ForEach(TagDefinition.availableColors, id: \.name) { colorOption in
+                    let isChosen = newTagColor == colorOption.name
+                    Circle()
+                        .fill(TagDefinition.swiftUIColor(for: colorOption.name))
+                        .frame(width: 20, height: 20)
+                        .overlay(
+                            Circle()
+                                .strokeBorder(Color.white, lineWidth: isChosen ? 2 : 0)
+                        )
+                        .shadow(color: isChosen ? TagDefinition.swiftUIColor(for: colorOption.name).opacity(0.5) : .clear, radius: 3)
+                        .onTapGesture {
+                            newTagColor = colorOption.name
+                        }
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    showingNewTag = false
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+
+                Button("Add") {
+                    let trimmed = newTagName
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased()
+                        .replacingOccurrences(of: " ", with: "-")
+                    guard !trimmed.isEmpty else { return }
+                    manager.upsertTagDefinition(TagDefinition(name: trimmed, colorName: newTagColor))
+                    showingNewTag = false
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(newTagName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(12)
+        .frame(width: 180)
     }
 
     // MARK: - Workspace List
@@ -177,9 +265,12 @@ struct WorkspaceSidebar: View {
                 }
             } else {
                 ForEach(filteredWorkspaces) { workspace in
-                    WorkspaceRow(workspace: workspace)
-                        .tag(workspace.id)
-                        .contextMenu { contextMenu(for: workspace) }
+                    WorkspaceRow(
+                        workspace: workspace,
+                        tagLookup: { manager.tagDefinition(for: $0) }
+                    )
+                    .tag(workspace.id)
+                    .contextMenu { contextMenu(for: workspace) }
                 }
             }
         }
@@ -224,19 +315,31 @@ struct WorkspaceSidebar: View {
 
         Divider()
 
-        // Tag management
+        // Tag management with colors
         Menu("Tags") {
-            ForEach(["feature", "bugfix", "refactor", "experiment", "review"], id: \.self) { tag in
+            ForEach(manager.tagDefinitions) { def in
                 Button {
-                    toggleTag(tag, on: workspace)
+                    toggleTag(def.name, on: workspace)
                 } label: {
                     HStack {
-                        Text(tag)
-                        if workspace.tags.contains(tag) {
+                        Circle()
+                            .fill(def.color)
+                            .frame(width: 8, height: 8)
+                        Text(def.name)
+                        Spacer()
+                        if workspace.tags.contains(def.name) {
                             Image(systemName: "checkmark")
                         }
                     }
                 }
+            }
+
+            Divider()
+
+            Button("Manage Tags...") {
+                newTagName = ""
+                newTagColor = "blue"
+                showingNewTag = true
             }
         }
 
@@ -251,8 +354,14 @@ struct WorkspaceSidebar: View {
 
         Divider()
 
-        Button("Remove", role: .destructive) {
+        Button("Remove from Workspace") {
             workspaceToDelete = workspace
+            deleteFromDisk = false
+        }
+
+        Button("Delete Worktree", role: .destructive) {
+            workspaceToDelete = workspace
+            deleteFromDisk = true
         }
     }
 
@@ -260,10 +369,21 @@ struct WorkspaceSidebar: View {
 
     @ViewBuilder
     private var deleteAlert: some View {
-        Button("Remove", role: .destructive) {
-            if let ws = workspaceToDelete {
-                Task {
-                    try? await manager.removeWorkspace(ws)
+        if deleteFromDisk {
+            Button("Delete", role: .destructive) {
+                if let ws = workspaceToDelete {
+                    Task {
+                        try? await manager.deleteWorkspace(ws)
+                        if selectedWorkspaceID == ws.id {
+                            selectedWorkspaceID = manager.workspaces.first?.id
+                        }
+                    }
+                }
+            }
+        } else {
+            Button("Remove", role: .destructive) {
+                if let ws = workspaceToDelete {
+                    manager.untrackWorkspace(ws)
                     if selectedWorkspaceID == ws.id {
                         selectedWorkspaceID = manager.workspaces.first?.id
                     }

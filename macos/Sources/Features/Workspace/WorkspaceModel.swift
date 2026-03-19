@@ -14,6 +14,7 @@ struct Workspace: Identifiable, Codable, Hashable {
     var agent: AgentType?
     var status: WorkspaceStatus
     var tags: [String]
+    var taskDescription: String?
 
     init(
         name: String,
@@ -21,7 +22,8 @@ struct Workspace: Identifiable, Codable, Hashable {
         worktreePath: String,
         branch: String,
         agent: AgentType? = nil,
-        tags: [String] = []
+        tags: [String] = [],
+        taskDescription: String? = nil
     ) {
         self.id = UUID()
         self.name = name
@@ -32,6 +34,7 @@ struct Workspace: Identifiable, Codable, Hashable {
         self.agent = agent
         self.status = .creating
         self.tags = tags
+        self.taskDescription = taskDescription
     }
 
     func hash(into hasher: inout Hasher) {

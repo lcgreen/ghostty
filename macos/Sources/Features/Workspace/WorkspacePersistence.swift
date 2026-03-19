@@ -38,13 +38,29 @@ final class WorkspacePersistence {
         }
     }
 
+    func loadTagDefinitions() -> [TagDefinition] {
+        guard let data = FileManager.default.contents(atPath: statePath) else {
+            return TagDefinition.presets
+        }
+        do {
+            let state = try decoder.decode(PersistedState.self, from: data)
+            let defs = state.tagDefinitions ?? []
+            return defs.isEmpty ? TagDefinition.presets : defs
+        } catch {
+            return TagDefinition.presets
+        }
+    }
+
     // MARK: - Save
 
-    func save(_ workspaces: [Workspace]) {
+    func save(_ workspaces: [Workspace], tagDefinitions: [TagDefinition]? = nil) {
+        // Preserve existing tag definitions if not explicitly provided
+        let tags = tagDefinitions ?? loadTagDefinitions()
         let state = PersistedState(
-            version: 1,
+            version: 2,
             lastUpdated: Date(),
-            workspaces: workspaces
+            workspaces: workspaces,
+            tagDefinitions: tags
         )
         do {
             let data = try encoder.encode(state)
@@ -57,6 +73,11 @@ final class WorkspacePersistence {
         } catch {
             print("[WorkspacePersistence] Failed to save state: \(error)")
         }
+    }
+
+    func saveTagDefinitions(_ definitions: [TagDefinition]) {
+        let workspaces = load()
+        save(workspaces, tagDefinitions: definitions)
     }
     // MARK: - Session State
 
@@ -148,4 +169,12 @@ private struct PersistedState: Codable {
     let version: Int
     let lastUpdated: Date
     let workspaces: [Workspace]
+    var tagDefinitions: [TagDefinition]?
+
+    init(version: Int, lastUpdated: Date, workspaces: [Workspace], tagDefinitions: [TagDefinition] = []) {
+        self.version = version
+        self.lastUpdated = lastUpdated
+        self.workspaces = workspaces
+        self.tagDefinitions = tagDefinitions
+    }
 }

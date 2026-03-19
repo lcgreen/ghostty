@@ -357,13 +357,16 @@ class AppDelegate: NSObject,
             //   - if we're opening a URL since `application(_:openFile:)` is called before this.
             //   - if we're restoring from persisted state
             if TerminalController.all.isEmpty && !WorkspaceWindowController.hasWindows && derivedConfig.initialWindow {
-                // Create a single workspace window — sidebar + custom tabs
-                // handle all workspace/tab restoration internally.
+                // Try to restore saved workspace tabs first
                 DispatchQueue.main.async { [self] in
-                    let controller = WorkspaceWindowController(self.ghostty)
-                    controller.showWindow(self)
-                    controller.window?.makeKeyAndOrderFront(nil)
-                    NSApp.activate(ignoringOtherApps: true)
+                    let restored = WorkspaceWindowController.restoreWindowTabs(self.ghostty)
+                    if !restored {
+                        // No saved state — create a fresh workspace window
+                        let controller = WorkspaceWindowController(self.ghostty)
+                        controller.showWindow(self)
+                        controller.window?.makeKeyAndOrderFront(nil)
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
                 }
             }
         }

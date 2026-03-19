@@ -187,9 +187,11 @@ private struct WorkspaceDetailContent: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Tab bar — always visible for quick access to + button
-            WorkspaceTabBar(tabGroup: tabGroup, onClose: onCloseTab)
-            Divider()
+            // Tab bar — only when 2+ tabs
+            if tabGroup.tabs.count > 1 {
+                WorkspaceTabBar(tabGroup: tabGroup, onClose: onCloseTab)
+                Divider()
+            }
 
             // Terminal for active tab
             if let vm = tabGroup.activeViewModel, !vm.surfaceTree.isEmpty {

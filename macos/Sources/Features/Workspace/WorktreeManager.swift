@@ -16,6 +16,7 @@ final class WorktreeManager: ObservableObject {
 
     @Published private(set) var workspaces: [Workspace] = []
     @Published private(set) var isCreating = false
+    @Published var tagDefinitions: [TagDefinition] = []
 
     // MARK: - Configuration
 
@@ -35,6 +36,7 @@ final class WorktreeManager: ObservableObject {
     init() {
         self.persistence = WorkspacePersistence()
         self.workspaces = persistence.load()
+        self.tagDefinitions = persistence.loadTagDefinitions()
     }
 
     // MARK: - Update Workspace
@@ -43,7 +45,37 @@ final class WorktreeManager: ObservableObject {
     func updateWorkspace(_ workspace: Workspace) {
         guard let idx = workspaces.firstIndex(where: { $0.id == workspace.id }) else { return }
         workspaces[idx] = workspace
-        persistence.save(workspaces)
+        saveInBackground()
+    }
+
+    // MARK: - Tag Registry
+
+    /// Look up the definition for a tag name, falling back to a default gray tag.
+    func tagDefinition(for name: String) -> TagDefinition {
+        tagDefinitions.first { $0.name == name }
+            ?? TagDefinition(name: name, colorName: "secondary")
+    }
+
+    /// Add or update a tag definition in the registry.
+    func upsertTagDefinition(_ definition: TagDefinition) {
+        if let idx = tagDefinitions.firstIndex(where: { $0.name == definition.name }) {
+            tagDefinitions[idx] = definition
+        } else {
+            tagDefinitions.append(definition)
+        }
+        saveInBackground()
+    }
+
+    /// Remove a tag definition and strip it from all workspaces.
+    func removeTagDefinition(_ name: String) {
+        tagDefinitions.removeAll { $0.name == name }
+        workspaces = workspaces.map { ws in
+            guard ws.tags.contains(name) else { return ws }
+            var updated = ws
+            updated.tags.removeAll { $0 == name }
+            return updated
+        }
+        saveInBackground()
     }
 
     // MARK: - Session Persistence
@@ -65,7 +97,9 @@ final class WorktreeManager: ObservableObject {
         repo: String,
         name: String,
         baseBranch: String = "main",
-        agent: AgentType? = nil
+        agent: AgentType? = nil,
+        tags: [String] = [],
+        taskDescription: String? = nil
     ) async throws -> Workspace {
         await MainActor.run { isCreating = true }
         defer { Task { @MainActor in self.isCreating = false } }
@@ -98,7 +132,9 @@ final class WorktreeManager: ObservableObject {
             repoPath: repo,
             worktreePath: worktreePath,
             branch: branchName,
-            agent: agent
+            agent: agent,
+            tags: tags,
+            taskDescription: taskDescription
         )
         let readyWorkspace = withStatus(workspace, .ready)
 
@@ -110,17 +146,66 @@ final class WorktreeManager: ObservableObject {
         return readyWorkspace
     }
 
-    // MARK: - Remove Workspace
+    // MARK: - Register Existing Project
 
-    /// Removes a workspace: kills processes, removes worktree, optionally deletes branch.
-    func removeWorkspace(_ workspace: Workspace, deleteBranch: Bool = false) async throws {
+    /// Registers an existing git repository or worktree as a workspace
+    /// without creating a new worktree.
+    func registerExistingProject(path: String) async throws -> Workspace {
+        let resolvedPath = (path as NSString).expandingTildeInPath
+
+        // Validate it's a git repo or worktree
+        let result = try await shell(
+            "git", "-C", resolvedPath, "rev-parse", "--show-toplevel"
+        )
+        guard result.exitCode == 0 else {
+            throw WorktreeError.creationFailed("Not a git repository: \(resolvedPath)")
+        }
+
+        let repoRoot = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Get current branch
+        let branchResult = try await shell(
+            "git", "-C", resolvedPath, "rev-parse", "--abbrev-ref", "HEAD"
+        )
+        let branch = branchResult.exitCode == 0
+            ? branchResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            : "main"
+
+        let name = URL(fileURLWithPath: resolvedPath).lastPathComponent
+
+        let workspace = Workspace(
+            name: name,
+            repoPath: repoRoot,
+            worktreePath: resolvedPath,
+            branch: branch
+        )
+        let readyWorkspace = withStatus(workspace, .ready)
+
+        await MainActor.run {
+            workspaces.append(readyWorkspace)
+            saveInBackground()
+        }
+
+        return readyWorkspace
+    }
+
+    // MARK: - Remove / Delete Workspace
+
+    /// Stop tracking a workspace without deleting files from disk.
+    func untrackWorkspace(_ workspace: Workspace) {
+        workspaces.removeAll { $0.id == workspace.id }
+        saveInBackground()
+    }
+
+    /// Deletes a workspace: removes worktree from disk, optionally deletes branch.
+    func deleteWorkspace(_ workspace: Workspace, deleteBranch: Bool = false) async throws {
         // Log teardown command if configured (not executed automatically for security)
         let config = loadRepoConfig(repo: workspace.repoPath)
         if let teardownCmd = config?.teardownCommand {
             logger.warning("Workspace config contains teardownCommand '\(teardownCmd)' — skipped automatic execution")
         }
 
-        // Remove the git worktree
+        // Remove the git worktree from disk
         try await gitWorktreeRemove(repo: workspace.repoPath, path: workspace.worktreePath)
 
         // Optionally delete the branch
@@ -130,8 +215,13 @@ final class WorktreeManager: ObservableObject {
 
         await MainActor.run {
             workspaces.removeAll { $0.id == workspace.id }
-            persistence.save(workspaces)
+            saveInBackground()
         }
+    }
+
+    /// Legacy alias — calls deleteWorkspace.
+    func removeWorkspace(_ workspace: Workspace, deleteBranch: Bool = false) async throws {
+        try await deleteWorkspace(workspace, deleteBranch: deleteBranch)
     }
 
     // MARK: - Refresh
@@ -161,9 +251,24 @@ final class WorktreeManager: ObservableObject {
         branch: String,
         baseBranch: String
     ) async throws {
-        let result = try await shell(
-            "git", "-C", repo, "worktree", "add", "-b", branch, path, baseBranch
+        // Check if branch already exists
+        let branchCheck = try await shell(
+            "git", "-C", repo, "rev-parse", "--verify", branch
         )
+
+        let result: ShellResult
+        if branchCheck.exitCode == 0 {
+            // Branch exists — reuse it
+            result = try await shell(
+                "git", "-C", repo, "worktree", "add", path, branch
+            )
+        } else {
+            // Create new branch from base
+            result = try await shell(
+                "git", "-C", repo, "worktree", "add", "-b", branch, path, baseBranch
+            )
+        }
+
         guard result.exitCode == 0 else {
             throw WorktreeError.creationFailed(result.stderr)
         }
@@ -223,6 +328,17 @@ final class WorktreeManager: ObservableObject {
                     continuation.resume(throwing: error)
                 }
             }
+        }
+    }
+
+    // MARK: - Background Persistence
+
+    /// Save state to disk on a background queue to avoid blocking the main thread.
+    private func saveInBackground() {
+        let workspacesSnapshot = workspaces
+        let tagsSnapshot = tagDefinitions
+        DispatchQueue.global(qos: .utility).async { [persistence] in
+            persistence.save(workspacesSnapshot, tagDefinitions: tagsSnapshot)
         }
     }
 
