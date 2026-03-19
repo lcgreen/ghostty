@@ -140,8 +140,14 @@ struct WorkspaceWindow: View {
             for: workspace, app: app, baseConfig: config,
             title: agent.displayName, agent: agent
         )
-        _ = entry
         bindActiveViewModel()
+
+        // Try to capture the agent's session ID after it starts
+        let tabID = entry.id
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak vmCache] in
+            guard let group = vmCache?.tabGroup(for: workspace, app: app, baseConfig: config) else { return }
+            group.captureSessionID(for: tabID)
+        }
     }
 
     // MARK: - Session Persistence
@@ -152,7 +158,7 @@ struct WorkspaceWindow: View {
             // Save ALL tabs for this workspace
             let tabStates = group.tabs.compactMap { tab -> TabSessionState? in
                 guard let layout = SplitLayout.from(tree: tab.viewModel.surfaceTree) else { return nil }
-                return TabSessionState(title: tab.title, splitLayout: layout, agent: tab.agent)
+                return TabSessionState(title: tab.title, splitLayout: layout, agent: tab.agent, sessionID: tab.sessionID)
             }
             guard !tabStates.isEmpty else { continue }
             let session = WorkspaceSessionState(

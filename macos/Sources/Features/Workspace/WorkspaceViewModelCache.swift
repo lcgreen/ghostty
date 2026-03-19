@@ -7,12 +7,14 @@ struct WorkspaceTabEntry: Identifiable {
     var title: String
     let viewModel: WorkspaceTerminalViewModel
     var agent: AgentType?
+    var sessionID: String?
 
-    init(title: String = "Shell", viewModel: WorkspaceTerminalViewModel, agent: AgentType? = nil) {
+    init(title: String = "Shell", viewModel: WorkspaceTerminalViewModel, agent: AgentType? = nil, sessionID: String? = nil) {
         self.id = UUID()
         self.title = title
         self.viewModel = viewModel
         self.agent = agent
+        self.sessionID = sessionID
     }
 }
 
@@ -49,6 +51,19 @@ class WorkspaceTabGroup: ObservableObject {
             activeTabID = id
         }
     }
+
+    /// Attempt to capture the agent session ID from the terminal buffer.
+    /// Call this a few seconds after an agent tab is created.
+    func captureSessionID(for tabID: UUID) {
+        guard let idx = tabs.firstIndex(where: { $0.id == tabID }),
+              tabs[idx].agent != nil,
+              tabs[idx].sessionID == nil,
+              let surface = tabs[idx].viewModel.surfaceTree.first?.surface else { return }
+
+        if let id = AgentSessionCapture.captureSessionID(from: surface, agent: tabs[idx].agent!) {
+            tabs[idx].sessionID = id
+        }
+    }
 }
 
 /// Caches per-workspace tab groups so workspace switching is instant.
@@ -77,11 +92,11 @@ final class WorkspaceViewModelCache: ObservableObject {
 
                     // Resume agent if one was running in this tab
                     if let agent = tabState.agent {
-                        config.initialInput = agent.resumeCommand() + "\n"
+                        config.initialInput = agent.resumeCommand(sessionID: tabState.sessionID) + "\n"
                     }
 
                     vm.surfaceTree = tabState.splitLayout.toSplitTree(app: app, baseConfig: config)
-                    let entry = WorkspaceTabEntry(title: tabState.title, viewModel: vm, agent: tabState.agent)
+                    let entry = WorkspaceTabEntry(title: tabState.title, viewModel: vm, agent: tabState.agent, sessionID: tabState.sessionID)
                     group.addTab(entry, activate: i == session.activeTabIndex)
                 }
             } else {
