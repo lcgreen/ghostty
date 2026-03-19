@@ -160,6 +160,7 @@ struct WorkspaceWindow: View {
                 tabs: tabStates,
                 activeTabIndex: group.tabs.firstIndex(where: { $0.id == group.activeTabID }) ?? 0
             )
+            ghostty.workspaceManager.saveSession(session)
         }
     }
 

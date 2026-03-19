@@ -245,24 +245,37 @@ struct NewProjectSheet: View {
         let name = repoURL.split(separator: "/").last?
             .replacingOccurrences(of: ".git", with: "") ?? "project"
         let dest = "\(location)/\(name)"
+        let url = repoURL
 
         try FileManager.default.createDirectory(
             atPath: location, withIntermediateDirectories: true
         )
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["clone", repoURL, dest]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = Pipe()
-        try process.run()
-        process.waitUntilExit()
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+                process.arguments = ["clone", url, dest]
+                process.standardOutput = FileHandle.nullDevice
+                process.standardError = Pipe()
 
-        guard process.terminationStatus == 0 else {
-            throw NSError(domain: "Ghostset", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: "Failed to clone repository"])
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+
+                    guard process.terminationStatus == 0 else {
+                        continuation.resume(throwing: NSError(
+                            domain: "Ghostset", code: 1,
+                            userInfo: [NSLocalizedDescriptionKey: "Failed to clone repository"]
+                        ))
+                        return
+                    }
+                    continuation.resume(returning: dest)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
         }
-        return dest
     }
 
     private func createEmptyRepo() async throws -> String {
@@ -272,14 +285,22 @@ struct NewProjectSheet: View {
             atPath: dest, withIntermediateDirectories: true
         )
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["init", dest]
-        process.standardOutput = FileHandle.nullDevice
-        try process.run()
-        process.waitUntilExit()
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+                process.arguments = ["init", dest]
+                process.standardOutput = FileHandle.nullDevice
 
-        return dest
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                    continuation.resume(returning: dest)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 
     private func browseLocation() {

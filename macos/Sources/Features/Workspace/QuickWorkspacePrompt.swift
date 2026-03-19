@@ -16,6 +16,7 @@ struct QuickWorkspacePrompt: View {
     @State private var selectedRepo: String?
     @State private var baseBranch = "main"
     @State private var isCreating = false
+    @State private var errorMessage: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,6 +28,15 @@ struct QuickWorkspacePrompt: View {
 
             // Bottom bar: repo, branch, hint
             bottomBar
+
+            // Error display
+            if let error = errorMessage {
+                Text(error)
+                    .font(.system(size: 11))
+                    .foregroundColor(.red)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
+            }
         }
         .background(.ultraThinMaterial)
         .cornerRadius(12)
@@ -225,6 +235,7 @@ struct QuickWorkspacePrompt: View {
                 )
                 onCreated(workspace, selectedAgent)
             } catch {
+                errorMessage = error.localizedDescription
                 isCreating = false
             }
         }

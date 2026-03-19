@@ -11,6 +11,16 @@ enum AgentType: Codable, Equatable, Hashable {
     case cursor
     case custom(String)
 
+    /// Characters that could enable shell injection when passed to a shell.
+    private static let shellMetacharacters = CharacterSet(charactersIn: ";|&$`\\(){}")
+
+    /// Strips shell metacharacters from a string to prevent command injection.
+    private static func sanitized(_ input: String) -> String {
+        input.unicodeScalars.filter { !shellMetacharacters.contains($0) }
+            .map { String($0) }
+            .joined()
+    }
+
     /// The CLI command to launch this agent with full/dangerous permissions
     var launchCommand: String {
         switch self {
@@ -20,7 +30,7 @@ enum AgentType: Codable, Equatable, Hashable {
         case .opencode: return "opencode"
         case .gemini: return "gemini"
         case .cursor: return "cursor-agent"
-        case .custom(let cmd): return cmd
+        case .custom(let cmd): return Self.sanitized(cmd)
         }
     }
 
@@ -64,7 +74,7 @@ enum AgentType: Codable, Equatable, Hashable {
         case .opencode: return "opencode"
         case .gemini: return "gemini"
         case .cursor: return "cursor-agent"
-        case .custom(let cmd): return cmd
+        case .custom(let cmd): return Self.sanitized(cmd)
         }
     }
 

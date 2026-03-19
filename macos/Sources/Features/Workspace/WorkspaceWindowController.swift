@@ -64,7 +64,7 @@ class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSMenuIte
             backing: .buffered,
             defer: false
         )
-        window.title = "👻"
+        window.title = "Ghostty"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.toolbarStyle = .unifiedCompact
@@ -170,7 +170,7 @@ class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSMenuIte
             let newTitle = textField.stringValue
             if newTitle.isEmpty {
                 self.titleOverride = nil
-                self.window?.title = "👻"
+                self.window?.title = "Ghostty"
             } else {
                 self.titleOverride = newTitle
                 self.window?.title = newTitle

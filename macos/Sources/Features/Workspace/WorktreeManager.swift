@@ -1,8 +1,15 @@
 import Foundation
 import Combine
+import os
+
+private let logger = Logger(
+    subsystem: Bundle.main.bundleIdentifier ?? "com.mitchellh.ghostty",
+    category: "worktree-manager"
+)
 
 /// Manages git worktrees and workspace lifecycle.
 /// All git operations are async and run off the main thread.
+/// @Published properties are mutated on the main thread via MainActor.run.
 final class WorktreeManager: ObservableObject {
 
     // MARK: - Published State
@@ -51,8 +58,8 @@ final class WorktreeManager: ObservableObject {
         baseBranch: String = "main",
         agent: AgentType? = nil
     ) async throws -> Workspace {
-        isCreating = true
-        defer { isCreating = false }
+        await MainActor.run { isCreating = true }
+        defer { Task { @MainActor in self.isCreating = false } }
 
         let repoName = repoDirectoryName(from: repo)
         let worktreePath = "\(Self.basePath)/\(repoName)/\(name)"
@@ -70,10 +77,10 @@ final class WorktreeManager: ObservableObject {
             baseBranch: baseBranch
         )
 
-        // Run setup command if configured
+        // Log setup command if configured (not executed automatically for security)
         let config = loadRepoConfig(repo: repo)
         if let setupCmd = config?.setupCommand {
-            try await runShellCommand(setupCmd, in: worktreePath, env: config?.environmentVariables)
+            logger.warning("Workspace config contains setupCommand '\(setupCmd)' — skipped automatic execution")
         }
 
         // Build workspace model
@@ -86,8 +93,10 @@ final class WorktreeManager: ObservableObject {
         )
         let readyWorkspace = withStatus(workspace, .ready)
 
-        workspaces.append(readyWorkspace)
-        persistence.save(workspaces)
+        await MainActor.run {
+            workspaces.append(readyWorkspace)
+            persistence.save(workspaces)
+        }
 
         return readyWorkspace
     }
@@ -96,10 +105,10 @@ final class WorktreeManager: ObservableObject {
 
     /// Removes a workspace: kills processes, removes worktree, optionally deletes branch.
     func removeWorkspace(_ workspace: Workspace, deleteBranch: Bool = false) async throws {
-        // Run teardown command if configured
+        // Log teardown command if configured (not executed automatically for security)
         let config = loadRepoConfig(repo: workspace.repoPath)
         if let teardownCmd = config?.teardownCommand {
-            try? await runShellCommand(teardownCmd, in: workspace.worktreePath)
+            logger.warning("Workspace config contains teardownCommand '\(teardownCmd)' — skipped automatic execution")
         }
 
         // Remove the git worktree
@@ -110,8 +119,10 @@ final class WorktreeManager: ObservableObject {
             try await gitBranchDelete(repo: workspace.repoPath, branch: workspace.branch)
         }
 
-        workspaces.removeAll { $0.id == workspace.id }
-        persistence.save(workspaces)
+        await MainActor.run {
+            workspaces.removeAll { $0.id == workspace.id }
+            persistence.save(workspaces)
+        }
     }
 
     // MARK: - Refresh
@@ -120,14 +131,17 @@ final class WorktreeManager: ObservableObject {
     func refresh(repo: String) async throws {
         let worktrees = try await gitWorktreeList(repo: repo)
         // Update status of each known workspace based on disk state
-        workspaces = workspaces.map { ws in
+        let updated = workspaces.map { ws in
             if worktrees.contains(ws.worktreePath) {
                 return ws.status == .creating ? withStatus(ws, .ready) : ws
             } else {
                 return withStatus(ws, .error("Worktree missing from disk"))
             }
         }
-        persistence.save(workspaces)
+        await MainActor.run {
+            workspaces = updated
+            persistence.save(workspaces)
+        }
     }
 
     // MARK: - Git Operations (private)
@@ -196,42 +210,6 @@ final class WorktreeManager: ObservableObject {
                         stdout: String(data: outData, encoding: .utf8) ?? "",
                         stderr: String(data: errData, encoding: .utf8) ?? ""
                     ))
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
-        }
-    }
-
-    private func runShellCommand(
-        _ command: String,
-        in directory: String,
-        env: [String: String]? = nil
-    ) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-                process.arguments = ["-c", command]
-                process.currentDirectoryURL = URL(fileURLWithPath: directory)
-
-                if let env = env {
-                    var processEnv = ProcessInfo.processInfo.environment
-                    for (key, value) in env { processEnv[key] = value }
-                    processEnv["GHOSTSET_WORKSPACE_PATH"] = directory
-                    process.environment = processEnv
-                }
-
-                do {
-                    try process.run()
-                    process.waitUntilExit()
-                    if process.terminationStatus == 0 {
-                        continuation.resume()
-                    } else {
-                        continuation.resume(throwing: WorktreeError.setupFailed(
-                            "Command '\(command)' exited with code \(process.terminationStatus)"
-                        ))
-                    }
                 } catch {
                     continuation.resume(throwing: error)
                 }
