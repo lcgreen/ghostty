@@ -1,307 +1,276 @@
 import SwiftUI
 
-/// A compact, clean git status panel for the sidebar.
-/// Shows branch info, flat file list with status indicators, and commit controls.
+/// VS Code-style source control panel — commit message at top, push button,
+/// staged/unstaged sections, files grouped by directory with line counts.
 struct GitStatusPanel: View {
     let workspace: Workspace
 
     @State private var changedFiles: [GitFileChange] = []
     @State private var isLoading = false
     @State private var commitMessage = ""
-    @State private var showingCommit = false
-    @State private var expandedFile: String?
-    @State private var diffText = ""
+    @State private var stagedExpanded = true
+    @State private var unstagedExpanded = true
     @State private var branchName = ""
     @State private var ahead = 0
     @State private var behind = 0
-    @State private var stashCount = 0
-    @State private var hoveredFile: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            branchRow
-            Divider().opacity(0.2)
-            actionRow
+            // Commit message (always visible)
+            commitInput
+
+            // Push button
+            pushButton
+
             Divider().opacity(0.2)
 
+            // File sections
             if isLoading {
                 loadingState
             } else if changedFiles.isEmpty {
                 emptyState
             } else {
-                fileList
-            }
-
-            if showingCommit {
-                Divider().opacity(0.2)
-                commitBar
-            }
-        }
-        .task(id: workspace.id) { await loadAll() }
-        .onChange(of: workspace.id) { _ in
-            // Reset state when switching workspaces
-            changedFiles = []
-            expandedFile = nil
-            diffText = ""
-            branchName = ""
-            ahead = 0
-            behind = 0
-            stashCount = 0
-            showingCommit = false
-            commitMessage = ""
-        }
-        .onReceive(NotificationCenter.default.publisher(
-            for: NSApplication.didBecomeActiveNotification
-        )) { _ in Task { await loadAll() } }
-    }
-
-    // MARK: - Branch Row
-
-    private var branchRow: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "arrow.triangle.branch")
-                .font(.system(size: 9))
-                .foregroundStyle(.tertiary)
-
-            Text(branchName.isEmpty ? workspace.branch : branchName)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-
-            Spacer(minLength: 2)
-
-            if ahead > 0 {
-                badge("↑\(ahead)", color: .green)
-            }
-            if behind > 0 {
-                badge("↓\(behind)", color: .orange)
-            }
-            if stashCount > 0 {
-                badge("⊡\(stashCount)", color: .purple)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-    }
-
-    private func badge(_ text: String, color: Color) -> some View {
-        Text(text)
-            .font(.system(size: 9, weight: .medium, design: .monospaced))
-            .foregroundColor(color.opacity(0.9))
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
-            .background(color.opacity(0.1))
-            .cornerRadius(3)
-    }
-
-    // MARK: - Action Row
-
-    private var actionRow: some View {
-        HStack(spacing: 0) {
-            let fileCount = changedFiles.count
-            let staged = stagedCount
-
-            if fileCount > 0 {
-                Text("\(fileCount) changed")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
-
-                if staged > 0 {
-                    Text(" · \(staged) staged")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                }
-            } else {
-                Text("Clean")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.tertiary)
-            }
-
-            Spacer(minLength: 4)
-
-            if fileCount > 0 {
-                actionButton("plus.circle", help: "Stage all") { await stageAll() }
-                actionButton("minus.circle", help: "Unstage all") { await unstageAll() }
-            }
-
-            actionButton("tray.and.arrow.down", help: "Stash") { await stash() }
-            actionButton("arrow.clockwise", help: "Refresh") { await loadAll() }
-
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) { showingCommit.toggle() }
-            } label: {
-                Image(systemName: showingCommit ? "checkmark.circle.fill" : "checkmark.circle")
-                    .font(.system(size: 10))
-                    .foregroundColor(showingCommit ? .blue : .secondary)
-            }
-            .buttonStyle(.plain)
-            .disabled(changedFiles.isEmpty)
-            .help("Commit")
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-    }
-
-    private func actionButton(_ icon: String, help: String, action: @escaping () async -> Void) -> some View {
-        Button { Task { await action() } } label: {
-            Image(systemName: icon)
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-                .frame(width: 20, height: 20)
-        }
-        .buttonStyle(.plain)
-        .help(help)
-    }
-
-    // MARK: - File List (flat, with short relative paths)
-
-    private var fileList: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(changedFiles) { file in
+                ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        fileRow(file)
-                        if expandedFile == file.path {
-                            diffPreview
+                        if !stagedFiles.isEmpty {
+                            sectionView(
+                                title: "Staged",
+                                count: stagedFiles.count,
+                                files: stagedFiles,
+                                isExpanded: $stagedExpanded,
+                                stageAction: { await unstageAll() },
+                                stageIcon: "minus",
+                                fileAction: { file in await unstage(file) }
+                            )
+                        }
+
+                        if !unstagedFiles.isEmpty {
+                            sectionView(
+                                title: "Unstaged",
+                                count: unstagedFiles.count,
+                                files: unstagedFiles,
+                                isExpanded: $unstagedExpanded,
+                                stageAction: { await stageAll() },
+                                stageIcon: "plus",
+                                fileAction: { file in await stage(file) }
+                            )
                         }
                     }
                 }
             }
         }
-        .frame(maxHeight: 280)
+        .task(id: workspace.id) { await loadAll() }
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification
+        )) { _ in Task { await loadAll() } }
     }
 
-    private func fileRow(_ file: GitFileChange) -> some View {
-        let isHovered = hoveredFile == file.path
-        let isExpanded = expandedFile == file.path
+    // MARK: - Computed
 
-        return HStack(spacing: 6) {
-            // Status indicator
-            Text(file.status.symbol)
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                .foregroundColor(file.status.color)
-                .frame(width: 10, alignment: .center)
+    private var stagedFiles: [GitFileChange] {
+        changedFiles.filter(\.isStaged)
+    }
 
-            // Staged dot
-            if file.isStaged {
-                Circle()
-                    .fill(Color.green.opacity(0.7))
-                    .frame(width: 4, height: 4)
-            } else {
-                Color.clear.frame(width: 4, height: 4)
+    private var unstagedFiles: [GitFileChange] {
+        changedFiles.filter { !$0.isStaged }
+    }
+
+    /// Group files by their directory path.
+    private func groupedByDir(_ files: [GitFileChange]) -> [(dir: String, files: [GitFileChange])] {
+        var groups: [String: [GitFileChange]] = [:]
+        for file in files {
+            let dir = directoryOf(file.path)
+            groups[dir, default: []].append(file)
+        }
+        return groups.sorted { $0.key < $1.key }.map { (dir: $0.key, files: $0.value) }
+    }
+
+    private func directoryOf(_ path: String) -> String {
+        let components = path.components(separatedBy: "/")
+        if components.count <= 1 { return "." }
+        return components.dropLast().joined(separator: "/")
+    }
+
+    // MARK: - Commit Input
+
+    private var commitInput: some View {
+        ZStack(alignment: .topLeading) {
+            if commitMessage.isEmpty {
+                Text("Commit message")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
             }
+            TextEditor(text: $commitMessage)
+                .font(.system(size: 12))
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 36, maxHeight: 60)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+        }
+        .background(Color.primary.opacity(0.04))
+        .cornerRadius(6)
+        .padding(.horizontal, 8)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+    }
 
-            // Just the filename — full path in tooltip
-            Text(URL(fileURLWithPath: file.path).lastPathComponent)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(.secondary)
+    // MARK: - Push Button
+
+    private var pushButton: some View {
+        Button {
+            if !commitMessage.isEmpty && !stagedFiles.isEmpty {
+                Task { await commit() }
+            } else {
+                Task { await push() }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: commitReady ? "checkmark" : "arrow.up")
+                    .font(.system(size: 10, weight: .medium))
+                Text(commitReady ? "Commit" : "Push")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .background(Color.primary.opacity(0.06))
+            .cornerRadius(6)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .padding(.bottom, 6)
+    }
+
+    private var commitReady: Bool {
+        !commitMessage.isEmpty && !stagedFiles.isEmpty
+    }
+
+    // MARK: - Section View
+
+    private func sectionView(
+        title: String,
+        count: Int,
+        files: [GitFileChange],
+        isExpanded: Binding<Bool>,
+        stageAction: @escaping () async -> Void,
+        stageIcon: String,
+        fileAction: @escaping (GitFileChange) async -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Section header
+            HStack(spacing: 4) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        isExpanded.wrappedValue.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: isExpanded.wrappedValue ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                            .frame(width: 10)
+
+                        Text(title)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+
+                Text("\(count)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+
+                Spacer()
+
+                // Stage/unstage all button
+                Button { Task { await stageAction() } } label: {
+                    Image(systemName: stageIcon)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 16, height: 16)
+                }
+                .buttonStyle(.plain)
+
+                // Refresh
+                Button { Task { await loadAll() } } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 16, height: 16)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+
+            // Files grouped by directory
+            if isExpanded.wrappedValue {
+                let groups = groupedByDir(files)
+                ForEach(Array(groups.enumerated()), id: \.element.dir) { _, group in
+                    // Directory header
+                    if group.dir != "." {
+                        HStack {
+                            Text(group.dir)
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                            Spacer()
+                            Text("\(group.files.count)")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.quaternary)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 2)
+                    }
+
+                    // Files
+                    ForEach(group.files) { file in
+                        fileRow(file, indent: group.dir != ".", action: fileAction)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - File Row
+
+    private func fileRow(
+        _ file: GitFileChange,
+        indent: Bool,
+        action: @escaping (GitFileChange) async -> Void
+    ) -> some View {
+        HStack(spacing: 5) {
+            // Status icon
+            Image(systemName: file.status.iconName)
+                .font(.system(size: 9))
+                .foregroundColor(file.status.color)
+                .frame(width: 12)
+
+            // Filename only
+            Text(file.filename)
+                .font(.system(size: 11))
+                .foregroundStyle(.primary)
                 .lineLimit(1)
-                .help(file.path)
 
             Spacer(minLength: 2)
 
-            // Stage/unstage on hover
-            if isHovered || isExpanded {
-                Button { Task { await toggleStage(file) } } label: {
-                    Image(systemName: file.isStaged ? "minus.circle" : "plus.circle")
-                        .font(.system(size: 9))
-                        .foregroundStyle(file.isStaged ? .orange : .green)
-                }
-                .buttonStyle(.plain)
-                .transition(.opacity)
+            // Line counts
+            if file.additions > 0 {
+                Text("+\(file.additions)")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.green)
+            }
+            if file.deletions > 0 {
+                Text("−\(file.deletions)")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.red)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 3)
-        .background(isExpanded ? Color.blue.opacity(0.06) : Color.clear)
+        .padding(.leading, indent ? 20 : 10)
+        .padding(.trailing, 10)
+        .padding(.vertical, 2)
         .contentShape(Rectangle())
-        .onHover { hoveredFile = $0 ? file.path : nil }
-        .onTapGesture { Task { await toggleDiff(for: file) } }
-    }
-
-
-    // MARK: - Diff Preview
-
-    private var diffPreview: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 0) {
-                let lines = diffText.components(separatedBy: "\n")
-                    .filter { !$0.hasPrefix("diff ") && !$0.hasPrefix("index ") && !$0.hasPrefix("---") && !$0.hasPrefix("+++") }
-                    .prefix(60)
-
-                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                    Text(line)
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundColor(diffLineColor(line))
-                        .textSelection(.enabled)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-        }
-        .frame(maxHeight: 140)
-        .background(Color.primary.opacity(0.02))
-        .cornerRadius(4)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-    }
-
-    private func diffLineColor(_ line: String) -> Color {
-        if line.hasPrefix("@@") { return .cyan.opacity(0.7) }
-        if line.hasPrefix("+") { return .green.opacity(0.85) }
-        if line.hasPrefix("-") { return .red.opacity(0.85) }
-        return .primary.opacity(0.5)
-    }
-
-    // MARK: - Commit Bar
-
-    private var commitBar: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 4) {
-                commitTemplateMenu
-
-                TextField("Commit message...", text: $commitMessage)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 11))
-            }
-
-            HStack(spacing: 6) {
-                if stagedCount > 0 {
-                    Text("\(stagedCount) staged")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.tertiary)
-                }
-                Spacer()
-                Button("Commit") { Task { await commit() } }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.mini)
-                    .disabled(commitMessage.isEmpty || stagedCount == 0)
-                Button("Push") { Task { await push() } }
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-    }
-
-    private var commitTemplateMenu: some View {
-        Menu {
-            ForEach(ConventionalCommit.prefixes, id: \.label) { prefix in
-                Button {
-                    commitMessage = prefix.label + " " + commitMessage
-                } label: {
-                    Text("\(prefix.emoji) \(prefix.label)")
-                }
-            }
-        } label: {
-            Image(systemName: "text.badge.plus")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-        }
-        .menuStyle(.borderlessButton)
-        .frame(width: 18)
     }
 
     // MARK: - States
@@ -311,14 +280,14 @@ struct GitStatusPanel: View {
             ProgressView().controlSize(.small)
             Text("Loading...").font(.system(size: 10)).foregroundStyle(.tertiary)
         }
-        .frame(maxWidth: .infinity, minHeight: 48)
+        .frame(maxWidth: .infinity, minHeight: 40)
     }
 
     private var emptyState: some View {
         HStack(spacing: 5) {
             Image(systemName: "checkmark.circle")
                 .font(.system(size: 10))
-                .foregroundStyle(.green.opacity(0.6))
+                .foregroundColor(.green.opacity(0.6))
             Text("Working tree clean")
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
@@ -326,46 +295,57 @@ struct GitStatusPanel: View {
         .frame(maxWidth: .infinity, minHeight: 36)
     }
 
-    // MARK: - Computed
-
-    private var stagedCount: Int { changedFiles.filter(\.isStaged).count }
-
     // MARK: - Git Operations
 
     private func loadAll() async {
-        async let s: Void = loadStatus()
-        async let b: Void = loadBranchInfo()
-        async let t: Void = loadStashCount()
-        _ = await (s, b, t)
-    }
-
-    private func loadStatus() async {
         isLoading = true
         defer { isLoading = false }
+
         let path = workspace.worktreePath
-        guard let output = await GitShell.asyncOutput(
-            ["git", "-C", path, "status", "--porcelain"]
-        ) else { return }
-        changedFiles = output.components(separatedBy: "\n")
+        guard FileManager.default.fileExists(atPath: path) else { return }
+
+        // Load status with numstat for line counts
+        async let statusTask: Void = loadStatus(path: path)
+        async let branchTask: Void = loadBranch(path: path)
+        _ = await (statusTask, branchTask)
+    }
+
+    private func loadStatus(path: String) async {
+        // Get file statuses
+        guard let statusOutput = await gitAsync(["git", "-C", path, "status", "--porcelain"]) else { return }
+
+        // Get line counts via numstat
+        let numstatOutput = await gitAsync(["git", "-C", path, "diff", "--numstat"]) ?? ""
+        var lineCounts: [String: (adds: Int, dels: Int)] = [:]
+        for line in numstatOutput.components(separatedBy: "\n") where !line.isEmpty {
+            let parts = line.components(separatedBy: "\t")
+            if parts.count >= 3 {
+                lineCounts[parts[2]] = (adds: Int(parts[0]) ?? 0, dels: Int(parts[1]) ?? 0)
+            }
+        }
+
+        changedFiles = statusOutput.components(separatedBy: "\n")
             .filter { !$0.isEmpty }
             .map { line in
                 let statusChar = String(line.prefix(2)).trimmingCharacters(in: .whitespaces)
                 let filePath = String(line.dropFirst(3))
                 let isStaged = line.first != " " && line.first != "?"
+                let counts = lineCounts[filePath]
                 return GitFileChange(
                     path: filePath,
                     status: GitFileStatus.from(statusChar),
-                    isStaged: isStaged
+                    isStaged: isStaged,
+                    additions: counts?.adds ?? 0,
+                    deletions: counts?.dels ?? 0
                 )
             }
     }
 
-    private func loadBranchInfo() async {
-        let path = workspace.worktreePath
-        if let name = await GitShell.asyncOutput(
-            ["git", "-C", path, "rev-parse", "--abbrev-ref", "HEAD"]
-        ) { branchName = name.trimmingCharacters(in: .whitespacesAndNewlines) }
-        if let counts = await GitShell.asyncOutput(
+    private func loadBranch(path: String) async {
+        if let name = await gitAsync(["git", "-C", path, "rev-parse", "--abbrev-ref", "HEAD"]) {
+            branchName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let counts = await gitAsync(
             ["git", "-C", path, "rev-list", "--count", "--left-right", "@{upstream}...HEAD"]
         ) {
             let parts = counts.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -375,61 +355,55 @@ struct GitStatusPanel: View {
         }
     }
 
-    private func loadStashCount() async {
-        let path = workspace.worktreePath
-        if let output = await GitShell.asyncOutput(["git", "-C", path, "stash", "list"]) {
-            stashCount = output.components(separatedBy: "\n").filter { !$0.isEmpty }.count
-        }
+    private func stage(_ file: GitFileChange) async {
+        _ = await gitAsync(["git", "-C", workspace.worktreePath, "add", file.path])
+        await loadStatus(path: workspace.worktreePath)
     }
 
-    private func toggleStage(_ file: GitFileChange) async {
-        let path = workspace.worktreePath
-        if file.isStaged {
-            _ = await GitShell.asyncOutput(["git", "-C", path, "reset", "HEAD", file.path])
-        } else {
-            _ = await GitShell.asyncOutput(["git", "-C", path, "add", file.path])
-        }
-        await loadStatus()
+    private func unstage(_ file: GitFileChange) async {
+        _ = await gitAsync(["git", "-C", workspace.worktreePath, "reset", "HEAD", file.path])
+        await loadStatus(path: workspace.worktreePath)
     }
 
     private func stageAll() async {
-        _ = await GitShell.asyncOutput(["git", "-C", workspace.worktreePath, "add", "-A"])
-        await loadStatus()
+        _ = await gitAsync(["git", "-C", workspace.worktreePath, "add", "-A"])
+        await loadStatus(path: workspace.worktreePath)
     }
 
     private func unstageAll() async {
-        _ = await GitShell.asyncOutput(["git", "-C", workspace.worktreePath, "reset", "HEAD"])
-        await loadStatus()
-    }
-
-    private func stash() async {
-        _ = await GitShell.asyncOutput(["git", "-C", workspace.worktreePath, "stash"])
-        await loadAll()
+        _ = await gitAsync(["git", "-C", workspace.worktreePath, "reset", "HEAD"])
+        await loadStatus(path: workspace.worktreePath)
     }
 
     private func commit() async {
         let msg = commitMessage
-        _ = await GitShell.asyncOutput(["git", "-C", workspace.worktreePath, "commit", "-m", msg])
+        _ = await gitAsync(["git", "-C", workspace.worktreePath, "commit", "-m", msg])
         commitMessage = ""
-        showingCommit = false
-        await loadStatus()
+        await loadStatus(path: workspace.worktreePath)
     }
 
     private func push() async {
-        _ = await GitShell.asyncOutput(["git", "-C", workspace.worktreePath, "push"])
+        _ = await gitAsync(["git", "-C", workspace.worktreePath, "push"])
     }
 
-    private func toggleDiff(for file: GitFileChange) async {
-        if expandedFile == file.path {
-            expandedFile = nil
-            diffText = ""
-            return
+    // MARK: - Shell
+
+    private func gitAsync(_ args: [String]) async -> String? {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let p = Process(); let pipe = Pipe()
+                p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                p.arguments = args; p.standardOutput = pipe
+                p.standardError = FileHandle.nullDevice
+                do {
+                    try p.run()
+                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    p.waitUntilExit()
+                    guard p.terminationStatus == 0 else { continuation.resume(returning: nil); return }
+                    continuation.resume(returning: String(data: data, encoding: .utf8))
+                } catch { continuation.resume(returning: nil) }
+            }
         }
-        expandedFile = file.path
-        let output = await GitShell.asyncOutput(
-            ["git", "-C", workspace.worktreePath, "diff", "--", file.path]
-        )
-        diffText = output?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "No diff available"
     }
 }
 
@@ -439,8 +413,11 @@ struct GitFileChange: Identifiable {
     let path: String
     let status: GitFileStatus
     var isStaged: Bool
+    var additions: Int = 0
+    var deletions: Int = 0
+
     var id: String { path }
-    var filename: String { path.components(separatedBy: "/").last ?? path }
+    var filename: String { URL(fileURLWithPath: path).lastPathComponent }
 }
 
 enum GitFileStatus {
@@ -457,13 +434,24 @@ enum GitFileStatus {
         }
     }
 
+    var iconName: String {
+        switch self {
+        case .modified: return "square.fill"
+        case .added: return "plus.square.fill"
+        case .deleted: return "minus.square.fill"
+        case .renamed: return "arrow.right.square.fill"
+        case .untracked: return "plus.square"
+        case .conflicted: return "exclamationmark.square.fill"
+        }
+    }
+
     var color: Color {
         switch self {
         case .modified: return .orange
         case .added: return .green
         case .deleted: return .red
         case .renamed: return .blue
-        case .untracked: return .secondary
+        case .untracked: return .green
         case .conflicted: return .red
         }
     }
