@@ -22,7 +22,7 @@ struct WorkspaceSidebar: View {
     @State private var workspaceFilter: WorkspaceFilter = .active
     @State private var renamingWorkspace: Workspace?
     @State private var renameText = ""
-    @State private var multiSelection: Set<UUID> = []
+    @State private var deleteError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -128,6 +128,16 @@ struct WorkspaceSidebar: View {
                 }
             }
         }
+        .alert("Delete Failed", isPresented: .init(
+            get: { deleteError != nil },
+            set: { if !$0 { deleteError = nil } }
+        )) {
+            Button("OK") { deleteError = nil }
+        } message: {
+            if let error = deleteError {
+                Text(error)
+            }
+        }
     }
 
     // MARK: - Filtered Workspaces
@@ -139,7 +149,7 @@ struct WorkspaceSidebar: View {
                 (workspaceFilter == .archived && ws.isArchived)
             guard matchesArchive else { return false }
 
-            let matchesTag = selectedTag == nil || ws.tags.contains(selectedTag!)
+            let matchesTag = selectedTag.map { ws.tags.contains($0) } ?? true
             guard matchesTag else { return false }
 
             guard !searchText.isEmpty else { return true }
@@ -164,6 +174,7 @@ struct WorkspaceSidebar: View {
             case .status:
                 return lhs.status.displayLabel < rhs.status.displayLabel
             case .changeCount:
+                // TODO: Sort by actual change count once stats are propagated from WorkspaceRow
                 return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
             }
         }
@@ -192,6 +203,7 @@ struct WorkspaceSidebar: View {
                     showingSearch.toggle()
                     if !showingSearch {
                         searchText = ""
+                        selectedTag = nil
                         workspaceFilter = .active
                     }
                 }
@@ -440,10 +452,6 @@ struct WorkspaceSidebar: View {
                     workspaceRowView(for: workspace)
                         .tag(workspace.id)
                         .contextMenu { contextMenu(for: workspace) }
-                        .onTapGesture(count: 2) {
-                            renamingWorkspace = workspace
-                            renameText = workspace.name
-                        }
                 }
                 .onMove { indices, destination in
                     manager.moveWorkspaces(from: indices, to: destination)
@@ -503,6 +511,11 @@ struct WorkspaceSidebar: View {
     private func contextMenu(for workspace: Workspace) -> some View {
         Button("Open in Finder") {
             NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: workspace.worktreePath)
+        }
+
+        Button("Rename...") {
+            renamingWorkspace = workspace
+            renameText = workspace.name
         }
 
         Divider()
@@ -582,7 +595,11 @@ struct WorkspaceSidebar: View {
             guard let ws = workspaceToDelete else { return }
             if deleteFromDisk {
                 Task {
-                    try? await manager.deleteWorkspace(ws)
+                    do {
+                        try await manager.deleteWorkspace(ws)
+                    } catch {
+                        deleteError = error.localizedDescription
+                    }
                     if selectedWorkspaceID == ws.id { selectedWorkspaceID = manager.workspaces.first?.id }
                 }
             } else {
@@ -596,13 +613,7 @@ struct WorkspaceSidebar: View {
     // MARK: - Tag Management
 
     private func toggleTag(_ tag: String, on workspace: Workspace) {
-        guard let idx = manager.workspaces.firstIndex(where: { $0.id == workspace.id }) else { return }
-        var updated = manager.workspaces[idx]
-        if updated.tags.contains(tag) {
-            updated.tags.removeAll { $0 == tag }
-        } else {
-            updated.tags.append(tag)
-        }
+        let updated = workspace.togglingTag(tag)
         manager.updateWorkspace(updated)
     }
 
