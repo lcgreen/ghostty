@@ -1,5 +1,6 @@
 import SwiftUI
 import GhosttyKit
+import Combine
 
 /// The main workspace window: sidebar + custom tab bar + terminal.
 /// Uses a view model cache so workspace switching is instant.
@@ -14,25 +15,13 @@ struct WorkspaceWindow: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .doubleColumn
     @State private var isReady = false
     @State private var showingCommandPalette = false
-    @State private var showingGitPanel = false
     @StateObject private var vmCache = WorkspaceViewModelCache()
     @StateObject private var splitDelegate = WorkspaceSplitDelegate()
 
     var body: some View {
         Group {
             if ghostty.app != nil {
-                NavigationSplitView(columnVisibility: $columnVisibility) {
-                    WorkspaceSidebar(
-                        manager: ghostty.workspaceManager,
-                        selectedWorkspaceID: $selectedWorkspaceID
-                    )
-                    .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 350)
-                } detail: {
-                    if isReady {
-                        detailView
-                    }
-                }
-                .navigationSplitViewStyle(.balanced)
+                mainContent
                 .onAppear {
                     if selectedWorkspaceID == nil {
                         // Restore from initial ID or auto-select first workspace
@@ -45,14 +34,34 @@ struct WorkspaceWindow: View {
                     }
                 }
                 .onChange(of: selectedWorkspaceID) { newID in
+                    saveAllSessions()
                     syncToController(newID)
                     bindActiveViewModel()
                 }
                 .onReceive(NotificationCenter.default.publisher(for: .ghostsetNewWorkspaceTab)) { notification in
-                    // Native tabs now handle this via WorkspaceWindowController
                     let agent = notification.userInfo?["agent"] as? AgentType
-                    if let agent {
-                        launchAgent(agent)
+                    addNewTab(agent: agent)
+                    saveAllSessions()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ghostset.tabClosed"))) { _ in
+                    bindActiveViewModel()
+                    saveAllSessions()
+                }
+                // Auto-save sessions every 30 seconds
+                .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
+                    saveAllSessions()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ghostset.moveTabToWorkspace"))) { notification in
+                    guard let info = notification.userInfo,
+                          let targetID = info["targetWorkspaceID"] as? UUID,
+                          targetID == selectedWorkspaceID,
+                          let app = ghostty.app else { return }
+                    let agent = info["agent"] as? AgentType
+
+                    // Switch to the target workspace and create a fresh tab there
+                    selectedWorkspaceID = targetID
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        addNewTab(agent: agent)
                     }
                 }
             } else {
@@ -86,6 +95,24 @@ struct WorkspaceWindow: View {
         }
     }
 
+    // MARK: - Main Content
+
+    @ViewBuilder
+    private var mainContent: some View {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            WorkspaceSidebar(
+                manager: ghostty.workspaceManager,
+                selectedWorkspaceID: $selectedWorkspaceID
+            )
+            .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 350)
+        } detail: {
+            if isReady {
+                detailView
+            }
+        }
+        .navigationSplitViewStyle(.balanced)
+    }
+
     // MARK: - Detail View
 
     @ViewBuilder
@@ -100,6 +127,7 @@ struct WorkspaceWindow: View {
                     group.closeTab(id: tabID)
                     bindActiveViewModel()
                 },
+                onNewTab: { addNewTab() },
                 onLaunchAgent: { agent in launchAgent(agent) }
             )
         }
@@ -129,7 +157,7 @@ struct WorkspaceWindow: View {
         }
         _ = vmCache.createTab(
             for: workspace, app: app, baseConfig: config,
-            title: agent?.displayName ?? "Shell", agent: agent
+            title: agent?.displayName ?? "", agent: agent
         )
         bindActiveViewModel()
     }
@@ -139,11 +167,15 @@ struct WorkspaceWindow: View {
         splitDelegate.viewModel = vm
         splitDelegate.workspaceID = selectedWorkspaceID
 
-        DispatchQueue.main.async {
-            if let window = NSApp.keyWindow,
-               let controller = window.windowController as? WorkspaceWindowController {
-                controller.terminalViewModel = vm
-                controller.activeTabGroup = group
+        DispatchQueue.main.async { [weak splitDelegate] in
+            guard let window = NSApp.keyWindow,
+                  let controller = window.windowController as? WorkspaceWindowController else { return }
+            controller.terminalViewModel = vm
+            controller.activeTabGroup = group
+
+            // Subscribe to the surface's title for tab name updates
+            if let surface = vm.surfaceTree.first(where: { _ in true }) {
+                splitDelegate?.observeSurfaceTitle(surface, tabGroup: group)
             }
         }
     }
@@ -155,14 +187,8 @@ struct WorkspaceWindow: View {
         }
     }
 
-    // MARK: - Agent Launch
-
     private func launchAgent(_ agent: AgentType) {
-        // Create a native tab with the agent — the WorkspaceWindowController handles this
-        if let window = NSApp.keyWindow,
-           let controller = window.windowController as? WorkspaceWindowController {
-            controller.newTabWithAgent(agent)
-        }
+        addNewTab(agent: agent)
     }
 
     // MARK: - Session Persistence
@@ -190,25 +216,42 @@ struct WorkspaceWindow: View {
 // MARK: - Detail Content (observes tab group changes)
 
 /// Inner view that uses @ObservedObject on the tab group so SwiftUI
-/// re-renders when the terminal changes.
+/// re-renders when tabs are added/removed/switched.
 private struct WorkspaceDetailContent: View {
     @ObservedObject var tabGroup: WorkspaceTabGroup
     let splitDelegate: WorkspaceSplitDelegate
     let workspace: Workspace?
     let workspaceManager: WorktreeManager
     var onCloseTab: (UUID) -> Void
+    var onNewTab: () -> Void
     var onLaunchAgent: (AgentType) -> Void
     @EnvironmentObject private var ghostty: Ghostty.App
 
     var body: some View {
         VStack(spacing: 0) {
-            // Terminal — single terminal per native tab (no custom tab bar)
+            // Tab bar — only when 2+ tabs
+            if tabGroup.tabs.count > 1 {
+                WorkspaceTabBar(
+                    tabGroup: tabGroup,
+                    onClose: onCloseTab,
+                    onNew: onNewTab,
+                    workspaces: workspaceManager.workspaces,
+                    onMoveToWorkspace: { tabID, wsID in moveTab(tabID, toWorkspace: wsID) },
+                    onTearOff: { tabID in tearOffTab(tabID) }
+                )
+                Divider().opacity(0.3)
+            }
+
+            // Terminal for active tab
             if let vm = tabGroup.activeViewModel, !vm.surfaceTree.isEmpty {
                 TerminalView(
                     ghostty: ghostty,
                     viewModel: vm,
                     delegate: splitDelegate
                 )
+                .onReceive(Timer.publish(every: 0.3, on: .main, in: .common).autoconnect()) { _ in
+                    tabGroup.syncTabTitlesFromSurfaces()
+                }
                 .id(tabGroup.activeTabID)
             }
 
@@ -217,6 +260,43 @@ private struct WorkspaceDetailContent: View {
             // Status bar
             statusBar
         }
+    }
+
+    /// Move a tab to another workspace — creates a fresh terminal in the target workspace's directory.
+    private func moveTab(_ tabID: UUID, toWorkspace targetWSID: UUID) {
+        guard let tabIndex = tabGroup.tabs.firstIndex(where: { $0.id == tabID }) else { return }
+        let tab = tabGroup.tabs[tabIndex]
+        let agent = tab.agent
+
+        // Remove from current workspace
+        onCloseTab(tabID)
+
+        // Post notification to create a new tab in the target workspace
+        NotificationCenter.default.post(
+            name: Notification.Name("ghostset.moveTabToWorkspace"),
+            object: nil,
+            userInfo: [
+                "agent": agent as Any,
+                "targetWorkspaceID": targetWSID
+            ] as [String: Any]
+        )
+    }
+
+    /// Tear off a tab into a standalone Ghostty terminal window.
+    private func tearOffTab(_ tabID: UUID) {
+        guard let tabIndex = tabGroup.tabs.firstIndex(where: { $0.id == tabID }) else { return }
+        let tab = tabGroup.tabs[tabIndex]
+        let surfaceTree = tab.viewModel.surfaceTree
+
+        // Remove from workspace tab group
+        onCloseTab(tabID)
+
+        // Create a new TerminalController with the surface tree
+        let controller = TerminalController(
+            ghostty,
+            withSurfaceTree: surfaceTree
+        )
+        controller.showWindow(nil)
     }
 
     private var statusBar: some View {
@@ -263,6 +343,19 @@ private struct WorkspaceDetailContent: View {
 final class WorkspaceSplitDelegate: NSObject, ObservableObject, TerminalViewDelegate {
     weak var viewModel: WorkspaceTerminalViewModel?
     var workspaceID: UUID?
+    private var titleCancellable: AnyCancellable?
+
+    /// Start observing the focused surface's title and update the active tab.
+    func observeSurfaceTitle(_ surface: Ghostty.SurfaceView?, tabGroup: WorkspaceTabGroup?) {
+        titleCancellable?.cancel()
+        guard let surface, let tabGroup else { return }
+        titleCancellable = surface.$title
+            .receive(on: DispatchQueue.main)
+            .sink { title in
+                let displayTitle = title.isEmpty ? "Shell" : title
+                tabGroup.updateActiveTabTitle(displayTitle)
+            }
+    }
 
     override init() {
         super.init()
@@ -278,15 +371,24 @@ final class WorkspaceSplitDelegate: NSObject, ObservableObject, TerminalViewDele
 
     func focusedSurfaceDidChange(to: Ghostty.SurfaceView?) {
         guard let s = to, let w = s.window else { return }
-        if let c = w.windowController as? WorkspaceWindowController, c.titleOverride == nil {
-            w.title = s.title.isEmpty ? "👻" : s.title
+        let title = s.title.isEmpty ? "Shell" : s.title
+        if let c = w.windowController as? WorkspaceWindowController {
+            if c.titleOverride == nil {
+                w.title = title
+            }
+            c.activeTabGroup?.updateActiveTabTitle(title)
+            // Subscribe to future title changes on this surface
+            observeSurfaceTitle(s, tabGroup: c.activeTabGroup)
         }
     }
 
     func pwdDidChange(to: URL?) {
         if let name = to?.lastPathComponent, let vm = viewModel, let s = vm.surfaceTree.first,
-           let w = s.window, let c = w.windowController as? WorkspaceWindowController, c.titleOverride == nil {
-            w.title = name
+           let w = s.window, let c = w.windowController as? WorkspaceWindowController {
+            if c.titleOverride == nil { w.title = name }
+            // Update tab title from surface title (or pwd as fallback)
+            let tabTitle = s.title.isEmpty ? name : s.title
+            c.activeTabGroup?.updateActiveTabTitle(tabTitle)
         }
         guard let wid = workspaceID, let pwd = to?.path,
               let ad = NSApplication.shared.delegate as? AppDelegate else { return }

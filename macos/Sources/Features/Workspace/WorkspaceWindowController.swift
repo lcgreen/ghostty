@@ -4,6 +4,7 @@ import GhosttyKit
 
 extension Notification.Name {
     static let ghostsetSaveSession = Notification.Name("com.ghostset.saveSession")
+    static let ghostsetNewWorkspaceTab = Notification.Name("com.ghostset.newWorkspaceTab")
 }
 
 /// NSWindowController that hosts the WorkspaceWindow SwiftUI view.
@@ -15,9 +16,8 @@ extension Notification.Name {
 class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
 
     /// Strong references to keep controllers alive while their windows are open.
-    /// NSWindow.windowController is weak, so without this the controller would
-    /// be deallocated immediately after creation.
     private static var activeControllers: Set<WorkspaceWindowController> = []
+
 
     /// All workspace window controllers currently open.
     static var all: [WorkspaceWindowController] {
@@ -29,7 +29,9 @@ class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSMenuIte
         !activeControllers.isEmpty
     }
 
+
     private let ghostty: Ghostty.App
+    private var keyEventMonitor: Any?
 
     /// The workspace ID this tab was opened with (nil = blank terminal).
     var selectedWorkspaceID: UUID?
@@ -70,8 +72,13 @@ class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSMenuIte
         window.toolbarStyle = .unifiedCompact
         window.minSize = NSSize(width: 600, height: 400)
 
-        // Use native macOS titlebar tabs — same as regular Ghostty windows
-        window.tabbingMode = .automatic
+        // Custom per-workspace tab bar — native tabs don't support per-workspace tab groups
+        window.tabbingMode = .disallowed
+        window.tab.title = ""
+        // Remove from any existing tab group
+        if let tabGroup = window.tabGroup, tabGroup.windows.count > 1 {
+            tabGroup.removeWindow(window)
+        }
         // Disable macOS window restoration (we handle our own persistence)
         window.isRestorable = false
 
@@ -90,12 +97,53 @@ class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSMenuIte
         window.contentView = NSHostingView(rootView: workspaceView)
         window.center()
 
+        // Set window title from workspace name or explicit title
         if let title {
             window.title = title
+        } else if let workspaceID,
+                  let ws = ghostty.workspaceManager.workspaces.first(where: { $0.id == workspaceID }) {
+            window.title = ws.name
         }
 
         // Retain self so the controller lives as long as the window
         Self.activeControllers.insert(self)
+
+        // Intercept keyboard shortcuts for workspace tab management
+        keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self,
+                  event.modifierFlags.contains(.command),
+                  let window = self.window,
+                  event.window == window,
+                  let group = self.activeTabGroup else { return event }
+
+            let key = event.charactersIgnoringModifiers ?? ""
+            let hasShift = event.modifierFlags.contains(.shift)
+            let hasOption = event.modifierFlags.contains(.option)
+
+            // Cmd+1-9: switch tabs (only when multiple tabs)
+            if !hasShift && !hasOption && group.tabs.count > 1 {
+                if let num = Int(key), num >= 1 && num <= 9 {
+                    group.selectTab(at: num - 1)
+                    return nil
+                }
+            }
+
+            // Cmd+W: close tab (when multiple tabs) instead of closing window
+            if key == "w" && !hasShift && !hasOption && group.tabs.count > 1 {
+                if let activeID = group.activeTabID,
+                   let activeTab = group.tabs.first(where: { $0.id == activeID }),
+                   !activeTab.isPinned {
+                    group.closeTab(id: activeID)
+                    // Notify SwiftUI to rebind
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ghostset.tabClosed"), object: nil
+                    )
+                }
+                return nil
+            }
+
+            return event
+        }
 
         // Listen for Ghostty core notifications
         NotificationCenter.default.addObserver(
@@ -109,6 +157,9 @@ class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSMenuIte
     }
 
     deinit {
+        if let monitor = keyEventMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -205,45 +256,26 @@ class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSMenuIte
         return true
     }
 
-    // MARK: - New Tab (native macOS titlebar tabs)
+    // MARK: - New Tab (custom per-workspace tab bar)
 
-    /// Cmd+T — create a new native tab in the same window tab group.
+    /// Cmd+T — create a new tab in the current workspace.
     @IBAction func newTab(_ sender: Any?) {
-        createNativeTab(agent: nil)
+        NotificationCenter.default.post(name: .ghostsetNewWorkspaceTab, object: nil)
     }
 
-    /// Launch an agent in a new native tab.
+    /// Launch an agent in a new tab.
     func newTabWithAgent(_ agent: AgentType) {
-        createNativeTab(agent: agent)
-    }
-
-    /// Creates a new WorkspaceWindowController and adds it as a native tabbed window.
-    private func createNativeTab(agent: AgentType?) {
-        guard let parentWindow = window else { return }
-
-        let controller = WorkspaceWindowController(
-            ghostty,
-            workspaceID: selectedWorkspaceID,
-            agent: agent
+        NotificationCenter.default.post(
+            name: .ghostsetNewWorkspaceTab,
+            object: nil,
+            userInfo: ["agent": agent]
         )
-
-        guard let newWindow = controller.window else { return }
-        controller.showWindow(nil)
-
-        // Add to the same tab group as this window
-        parentWindow.addTabbedWindow(newWindow, ordered: .above)
-        newWindow.makeKeyAndOrderFront(nil)
     }
 
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
-        // Tear down the SwiftUI hosting view before the window fully closes.
-        // This ensures SurfaceViews are deallocated before the Zig core's
-        // next tick, preventing dangling pointer crashes.
         window?.contentView = nil
-
-        // Release the strong reference so the controller can be deallocated
         Self.activeControllers.remove(self)
     }
 
@@ -289,45 +321,37 @@ class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSMenuIte
         all.filter { $0.selectedWorkspaceID == workspaceID }
     }
 
-    /// Restore workspace window tabs from persistence.
-    /// Groups tabs by workspace so each workspace gets its own tab group.
+    /// Restore workspace window tabs from persistence, preserving original order.
     static func restoreWindowTabs(_ ghostty: Ghostty.App) -> Bool {
         let persistence = WorkspacePersistence()
         guard let state = persistence.loadWindowState(), !state.tabs.isEmpty else {
             return false
         }
 
-        // Group tabs by workspace
-        var groups: [UUID?: [WindowTabState]] = [:]
-        for tab in state.tabs {
-            groups[tab.selectedWorkspaceID, default: []].append(tab)
-        }
-
         var firstController: WorkspaceWindowController?
 
-        for (_, tabs) in groups {
-            var groupFirst: WorkspaceWindowController?
+        // Restore tabs in order (not grouped by workspace — preserves original tab order)
+        for (index, tab) in state.tabs.enumerated() {
+            let title = tab.title ?? tab.agent?.displayName ?? "Shell"
+            let controller = WorkspaceWindowController(
+                ghostty,
+                workspaceID: tab.selectedWorkspaceID,
+                splitLayout: tab.splitLayout,
+                title: title,
+                agent: tab.agent,
+                agentSessionID: tab.agentSessionID
+            )
 
-            for (index, tab) in tabs.enumerated() {
-                let controller = WorkspaceWindowController(
-                    ghostty,
-                    workspaceID: tab.selectedWorkspaceID,
-                    splitLayout: tab.splitLayout,
-                    title: tab.title,
-                    agent: tab.agent,
-                    agentSessionID: tab.agentSessionID
-                )
+            if let newWindow = controller.window {
+                newWindow.title = title
+            }
 
-                if index == 0 {
-                    groupFirst = controller
-                    controller.showWindow(nil)
-                    if firstController == nil {
-                        firstController = controller
-                    }
-                } else if let groupWindow = groupFirst?.window,
-                          let newWindow = controller.window {
-                    groupWindow.addTabbedWindow(newWindow, ordered: .above)
-                }
+            if index == 0 {
+                firstController = controller
+                controller.showWindow(nil)
+            } else if let firstWindow = firstController?.window,
+                      let newWindow = controller.window {
+                firstWindow.addTabbedWindow(newWindow, ordered: .above)
             }
         }
 

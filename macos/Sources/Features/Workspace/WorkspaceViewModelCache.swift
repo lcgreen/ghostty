@@ -8,8 +8,11 @@ struct WorkspaceTabEntry: Identifiable {
     let viewModel: WorkspaceTerminalViewModel
     var agent: AgentType?
     var sessionID: String?
+    var isPinned: Bool = false
+    var colorName: String?
+    var iconOverride: String?
 
-    init(title: String = "Shell", viewModel: WorkspaceTerminalViewModel, agent: AgentType? = nil, sessionID: String? = nil) {
+    init(title: String = "", viewModel: WorkspaceTerminalViewModel, agent: AgentType? = nil, sessionID: String? = nil) {
         self.id = UUID()
         self.title = title
         self.viewModel = viewModel
@@ -34,6 +37,74 @@ class WorkspaceTabGroup: ObservableObject {
     func addTab(_ entry: WorkspaceTabEntry, activate: Bool = true) {
         tabs.append(entry)
         if activate { activeTabID = entry.id }
+    }
+
+    func updateActiveTabTitle(_ title: String) {
+        guard let id = activeTabID,
+              let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
+        // Don't override agent tab titles
+        guard tabs[idx].agent == nil else { return }
+        if tabs[idx].title != title {
+            tabs[idx].title = title
+        }
+    }
+
+    /// Sync all tab titles from their surface views — use the raw title as-is.
+    /// Only updates if the surface title has been stable (not changing rapidly).
+    private var lastSeenTitles: [UUID: (title: String, since: Date)] = [:]
+
+    func syncTabTitlesFromSurfaces() {
+        let now = Date()
+        for i in tabs.indices {
+            // Skip agent tabs — they keep their agent name
+            guard tabs[i].agent == nil else { continue }
+            guard let surface = tabs[i].viewModel.surfaceTree.first(where: { _ in true }) else { continue }
+            let surfaceTitle = surface.title
+            guard !surfaceTitle.isEmpty else { continue }
+
+            let tabID = tabs[i].id
+            if let last = lastSeenTitles[tabID], last.title == surfaceTitle {
+                // Title has been stable — apply it if different from current tab title
+                if now.timeIntervalSince(last.since) > 0.5 && tabs[i].title != surfaceTitle {
+                    tabs[i].title = surfaceTitle
+                }
+            } else {
+                // Title changed — record it, don't apply yet (wait for stability)
+                lastSeenTitles[tabID] = (title: surfaceTitle, since: now)
+            }
+        }
+    }
+
+    func selectTab(at index: Int) {
+        guard index >= 0 && index < tabs.count else { return }
+        activeTabID = tabs[index].id
+    }
+
+    func togglePin(id: UUID) {
+        guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
+        tabs[idx].isPinned.toggle()
+        // Move pinned tabs to the front
+        let pinned = tabs.filter(\.isPinned)
+        let unpinned = tabs.filter { !$0.isPinned }
+        tabs = pinned + unpinned
+    }
+
+    func setTabColor(id: UUID, color: String?) {
+        guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
+        tabs[idx].colorName = color
+    }
+
+    func setTabIcon(id: UUID, icon: String?) {
+        guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
+        tabs[idx].iconOverride = icon
+    }
+
+    func moveTab(id: UUID, toIndex destination: Int) {
+        guard let sourceIndex = tabs.firstIndex(where: { $0.id == id }) else { return }
+        let dest = min(destination, tabs.count - 1)
+        guard sourceIndex != dest else { return }
+        let tab = tabs.remove(at: sourceIndex)
+        tabs.insert(tab, at: dest)
     }
 
     func closeTab(id: UUID) {
@@ -112,7 +183,7 @@ final class WorkspaceViewModelCache: ObservableObject {
                 group.addTab(WorkspaceTabEntry(title: agent.displayName, viewModel: vm, agent: agent))
             } else {
                 let vm = createViewModel(app: app, baseConfig: baseConfig, workspace: workspace)
-                group.addTab(WorkspaceTabEntry(title: workspace.name, viewModel: vm))
+                group.addTab(WorkspaceTabEntry(title: "", viewModel: vm))
             }
 
             cache[workspace.id] = group
@@ -121,7 +192,7 @@ final class WorkspaceViewModelCache: ObservableObject {
             if let existing = defaultGroup { return existing }
             let group = WorkspaceTabGroup()
             let vm = createViewModel(app: app, baseConfig: baseConfig, workspace: nil)
-            group.addTab(WorkspaceTabEntry(title: "Terminal", viewModel: vm))
+            group.addTab(WorkspaceTabEntry(title: "", viewModel: vm))
             defaultGroup = group
             return group
         }

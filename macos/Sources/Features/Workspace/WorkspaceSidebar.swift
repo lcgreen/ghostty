@@ -16,6 +16,7 @@ struct WorkspaceSidebar: View {
     @State private var showingGitPanel = false
     @State private var showingDiffView = false
     @State private var showingTemplates = false
+    @State private var showingEnvironments = false
     @State private var settingsWorkspace: Workspace?
     @State private var sortOrder: WorkspaceSortOrder = .manual
     @State private var workspaceFilter: WorkspaceFilter = .active
@@ -96,6 +97,9 @@ struct WorkspaceSidebar: View {
         }
         .sheet(isPresented: $showingTemplates) {
             TemplateManagerView(manager: manager)
+        }
+        .sheet(isPresented: $showingEnvironments) {
+            EnvironmentManagerView(manager: manager)
         }
         .popover(
             isPresented: .init(
@@ -260,6 +264,11 @@ struct WorkspaceSidebar: View {
                 showingTemplates = true
             } label: {
                 Label("Manage Templates", systemImage: "doc.on.doc")
+            }
+            Button {
+                showingEnvironments = true
+            } label: {
+                Label("Environments", systemImage: "server.rack")
             }
             Divider()
             Button {

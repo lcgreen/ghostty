@@ -85,6 +85,17 @@ struct Workspace: Identifiable, Codable, Hashable {
         return copy
     }
 
+    /// Returns a copy with the given tag toggled on/off.
+    func togglingTag(_ tag: String) -> Workspace {
+        var copy = self
+        if copy.tags.contains(tag) {
+            copy.tags.removeAll { $0 == tag }
+        } else {
+            copy.tags.append(tag)
+        }
+        return copy
+    }
+
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
     }

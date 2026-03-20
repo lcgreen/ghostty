@@ -102,9 +102,8 @@ extension SplitLayout {
         switch self {
         case .leaf(let leaf):
             var config = baseConfig ?? Ghostty.SurfaceConfiguration()
-            // Only override working directory if baseConfig doesn't already set one
-            // (workspace worktree path takes priority over saved pwd)
-            if config.workingDirectory == nil, let pwd = leaf.workingDirectory {
+            // Use saved pwd (terminal's last directory) — overrides workspace root
+            if let pwd = leaf.workingDirectory, !pwd.isEmpty {
                 config.workingDirectory = pwd
             }
             // Only the first leaf runs the agent command

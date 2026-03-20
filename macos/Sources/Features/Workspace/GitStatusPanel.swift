@@ -16,44 +16,19 @@ struct GitStatusPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Commit message (always visible)
-            commitInput
-
-            // Push button
-            pushButton
-
-            Divider().opacity(0.2)
-
-            // File sections
             if isLoading {
                 loadingState
             } else if changedFiles.isEmpty {
                 emptyState
             } else {
+                commitInput
+                Divider().opacity(0.2)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        if !stagedFiles.isEmpty {
-                            sectionView(
-                                title: "Staged",
-                                count: stagedFiles.count,
-                                files: stagedFiles,
-                                isExpanded: $stagedExpanded,
-                                stageAction: { await unstageAll() },
-                                stageIcon: "minus",
-                                fileAction: { file in await unstage(file) }
-                            )
-                        }
-
-                        if !unstagedFiles.isEmpty {
-                            sectionView(
-                                title: "Unstaged",
-                                count: unstagedFiles.count,
-                                files: unstagedFiles,
-                                isExpanded: $unstagedExpanded,
-                                stageAction: { await stageAll() },
-                                stageIcon: "plus",
-                                fileAction: { file in await stage(file) }
-                            )
+                        ForEach(changedFiles) { file in
+                            fileRow(file, action: { f in
+                                if f.isStaged { await unstage(f) } else { await stage(f) }
+                            })
                         }
                     }
                 }
@@ -94,56 +69,35 @@ struct GitStatusPanel: View {
     // MARK: - Commit Input
 
     private var commitInput: some View {
-        ZStack(alignment: .topLeading) {
-            if commitMessage.isEmpty {
-                Text("Commit message")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.tertiary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-            }
-            TextEditor(text: $commitMessage)
-                .font(.system(size: 12))
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: 36, maxHeight: 60)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
-        }
-        .background(Color.primary.opacity(0.04))
-        .cornerRadius(6)
-        .padding(.horizontal, 8)
-        .padding(.top, 8)
-        .padding(.bottom, 4)
-    }
+        HStack(spacing: 4) {
+            TextField("Commit message", text: $commitMessage)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Color.primary.opacity(0.04))
+                .cornerRadius(4)
 
-    // MARK: - Push Button
-
-    private var pushButton: some View {
-        Button {
+            // Commit button (only when message + staged files)
             if !commitMessage.isEmpty && !stagedFiles.isEmpty {
-                Task { await commit() }
-            } else {
-                Task { await push() }
+                Button { Task { await commit() } } label: {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(.green)
+                }
+                .buttonStyle(.plain)
             }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: commitReady ? "checkmark" : "arrow.up")
-                    .font(.system(size: 10, weight: .medium))
-                Text(commitReady ? "Commit" : "Push")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
-            .background(Color.primary.opacity(0.06))
-            .cornerRadius(6)
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 8)
-        .padding(.bottom, 6)
-    }
 
-    private var commitReady: Bool {
-        !commitMessage.isEmpty && !stagedFiles.isEmpty
+            // Push button
+            Button { Task { await push() } } label: {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
     }
 
     // MARK: - Section View
@@ -205,29 +159,10 @@ struct GitStatusPanel: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
 
-            // Files grouped by directory
+            // Files (flat list, no directory grouping)
             if isExpanded.wrappedValue {
-                let groups = groupedByDir(files)
-                ForEach(Array(groups.enumerated()), id: \.element.dir) { _, group in
-                    // Directory header
-                    if group.dir != "." {
-                        HStack {
-                            Text(group.dir)
-                                .font(.system(size: 10))
-                                .foregroundStyle(.tertiary)
-                            Spacer()
-                            Text("\(group.files.count)")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.quaternary)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 2)
-                    }
-
-                    // Files
-                    ForEach(group.files) { file in
-                        fileRow(file, indent: group.dir != ".", action: fileAction)
-                    }
+                ForEach(files) { file in
+                    fileRow(file, action: fileAction)
                 }
             }
         }
@@ -237,39 +172,41 @@ struct GitStatusPanel: View {
 
     private func fileRow(
         _ file: GitFileChange,
-        indent: Bool,
         action: @escaping (GitFileChange) async -> Void
     ) -> some View {
-        HStack(spacing: 5) {
-            // Status icon
+        HStack(spacing: 4) {
             Image(systemName: file.status.iconName)
-                .font(.system(size: 9))
+                .font(.system(size: 8))
                 .foregroundColor(file.status.color)
-                .frame(width: 12)
+                .frame(width: 10)
 
-            // Filename only
-            Text(file.filename)
-                .font(.system(size: 11))
-                .foregroundStyle(.primary)
+            Text(file.path)
+                .font(.system(size: 10, design: .monospaced))
                 .lineLimit(1)
+                .truncationMode(.head)
 
             Spacer(minLength: 2)
 
-            // Line counts
             if file.additions > 0 {
                 Text("+\(file.additions)")
-                    .font(.system(size: 9, design: .monospaced))
+                    .font(.system(size: 8, design: .monospaced))
                     .foregroundColor(.green)
             }
             if file.deletions > 0 {
-                Text("−\(file.deletions)")
-                    .font(.system(size: 9, design: .monospaced))
+                Text("-\(file.deletions)")
+                    .font(.system(size: 8, design: .monospaced))
                     .foregroundColor(.red)
             }
+
+            Button { Task { await action(file) } } label: {
+                Image(systemName: file.isStaged ? "minus" : "plus")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
         }
-        .padding(.leading, indent ? 20 : 10)
-        .padding(.trailing, 10)
-        .padding(.vertical, 2)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 1)
         .contentShape(Rectangle())
     }
 
