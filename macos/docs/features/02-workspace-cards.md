@@ -263,43 +263,54 @@ Lines joined with `"\n"`.
 
 ## Known Issues
 
-### 1. Stale change stats after workspace mutations
+1. **Drag drops UUID on terminal** — swipe reorder in sidebar uses `onMove` which works, but the workspace tab bar's drag can leak UUIDs if dropped on terminal.
+2. **Agent status is from workspace model, not live** — status dot shows `WorkspaceStatus` from the model, not whether the agent process is actually running.
 
-`loadChangeStats()` is triggered by `.task(id: workspace.id)`, which only re-fires when the workspace's UUID changes. If files are modified within the worktree after the initial load, the stats remain stale until the view is recreated. There is no periodic refresh or notification-based invalidation.
+## Implemented Features (previously in Future Enhancements)
 
-### 2. Animation state not reset when `hasUnread` becomes false externally before `.onChange` fires
+| Feature | Status | Implementation |
+|---------|--------|----------------|
+| Periodic refresh of change stats | **Done** | 60-second timer + refresh on app-becomes-active |
+| Tap-to-expand detail row | **Done** | Double-click expands: task description, full branch, worktree path, all tags, file stats |
+| Drag-and-drop reordering | **Done** | Sidebar `onMove` modifier |
+| Context menu | **Done** | Full context menu in WorkspaceSidebar (pin, archive, tags, settings, etc.) |
+| Accessibility labels | **Done** | `.accessibilityLabel` and `.accessibilityValue` with workspace name, agent, status, changes |
+| Last activity timestamp | **Done** | `git log -1 --format=%cr` shows relative time (e.g., "2 hours ago") next to branch |
+| Swipe actions | **Done** | Swipe leading → Pin/Unpin (orange), swipe trailing → Archive/Unarchive (purple) |
+| Fix `hasUnread` init | **Done** | `.onAppear` syncs `isAnimatingStatus` with initial `hasUnread` value |
+| Cancel git on disappear | **Done** | `Task.isCancelled` checks before and after async git operations |
+| Branch abbreviation | **Done** | Strips 8 prefixes: ghostset/, feature/, bugfix/, hotfix/, release/, chore/, fix/, feat/ |
+| Tag pill overflow | **Done** | Removed `.fixedSize()`, uses `.lineLimit(1)` instead |
 
-The `.onChange(of: hasUnread)` modifier sets `isAnimatingStatus = newValue`. However, if the view is recreated (e.g., due to list identity change) while `hasUnread` is false, `isAnimatingStatus` correctly defaults to `false`. The concern is narrow: if `hasUnread` is `true` at init time, the animation will NOT start because `.onChange` only fires on *changes*, not on initial value. The `@State private var isAnimatingStatus = false` will remain `false` even though `hasUnread` is `true`.
+## Recently Implemented
 
-### 3. Branch abbreviation only strips one prefix
-
-`abbreviatedBranch` only strips the `"ghostset/"` prefix. Other common prefixes (`feature/`, `bugfix/`, etc.) are displayed in full, which may cause truncation in narrow sidebars.
-
-### 4. Tag pill `fixedSize()` can overflow
-
-Each tag pill uses `.fixedSize()`, which prevents the text from being compressed. Combined with `ForEach(workspace.tags.prefix(3))`, three long tag names could overflow the available horizontal space, pushing the status column off-screen.
-
-### 5. Git process not cancelled on view disappear
-
-`loadChangeStats()` uses `GitShell.asyncOutput` which wraps a synchronous `Process` in `withCheckedContinuation`. If the view disappears (e.g., workspace deleted while git is running), the task is cancelled at the Swift concurrency level but the underlying `Process` continues to run until completion. This is a minor resource leak.
-
-### 6. Potential main-thread state mutation from background
-
-`GitShell.asyncOutput` resumes its continuation on a background queue (`DispatchQueue.global`). The `@State` assignment `changeStats = GitShell.parseShortstat(output)` happens after the `await`, which may or may not be on the main actor depending on Swift's actor inference for the `body` context. This could cause a main-thread assertion in debug builds.
+| Feature | Implementation |
+|---------|----------------|
+| **Live agent process detection** | `pgrep -f` checks if agent command is running in worktree. Green dot when running. |
+| **Inline diff preview** | Expanded view shows up to 8 changed file names with `git diff --name-only` |
+| **Copy branch name** | Clipboard button next to branch in expanded detail |
+| **Workspace health indicators** | Merge conflicts (red warning triangle), branch age ("N behind main") |
 
 ## Future Enhancements
 
-1. **Periodic refresh of change stats** — Use a `Timer` or `AsyncStream` to re-poll `git diff --shortstat` every N seconds while the workspace is visible.
-2. **Tap-to-expand detail row** — Show `taskDescription`, full tag list, and file-level diff summary in an expandable disclosure area.
-3. **Drag-and-drop reordering** — Enable manual sort order by supporting `onMove` or `draggable`/`dropDestination` modifiers.
-4. **Context menu** — Right-click to pin, archive, rename, copy branch name, or open in Finder.
-5. **Accessibility labels** — Add `.accessibilityLabel` and `.accessibilityValue` for VoiceOver support (currently absent).
-6. **Last activity timestamp** — Show relative time ("2m ago") for the most recent git commit or terminal output.
-7. **Agent status integration** — Show whether the agent process is actually running vs. the workspace status, with distinct indicators.
-8. **Swipe actions** — Add leading/trailing swipe gestures for quick pin/archive on trackpad.
-9. **Fix `hasUnread` initialization** — Use `.onAppear` or `.task` to sync `isAnimatingStatus` with the initial `hasUnread` value.
-10. **Cancel git process on disappear** — Store the `Process` reference and call `terminate()` when the task is cancelled.
+1. **Inline diff content** — show actual diff lines per file, not just file names
+2. **PR status** — show if a PR exists for this branch, its review state
+3. **CI/CD status** — show build status from GitHub Actions or similar
 
 ## Changelog
 
-- **2026-03-20**: Initial spec. Documented all visual elements, state properties, color values, font sizes, spacing, integration points, and 6 known issues from code analysis of `WorkspaceRow.swift` (164 lines).
+- **2026-03-20**: Initial spec created
+- **2026-03-20**: Fixed hasUnread animation init, removed fixedSize on tags
+- **2026-03-20**: Added periodic refresh (60s timer + app-becomes-active)
+- **2026-03-20**: Added double-click to expand (task, branch, path, all tags, stats)
+- **2026-03-20**: Added accessibility labels and values
+- **2026-03-20**: Added last commit time via `git log -1 --format=%cr`
+- **2026-03-20**: Added swipe actions (pin/archive)
+- **2026-03-20**: Branch abbreviation strips 8 common prefixes
+- **2026-03-20**: Git operations check Task.isCancelled
+- **2026-03-20**: Live agent process detection via pgrep
+- **2026-03-20**: Changed file names shown in expanded detail (up to 8)
+- **2026-03-20**: Copy branch name button in expanded detail
+- **2026-03-20**: Merge conflict detection (red warning triangle)
+- **2026-03-20**: Branch age indicator ("N behind main")
+- **2026-03-20**: Removed double-click expand, replaced with chevron button

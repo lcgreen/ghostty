@@ -57,6 +57,16 @@ struct WorkspaceSidebar: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             manager.refreshStats()
         }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ghostset.togglePin"))) { notification in
+            guard let wsID = notification.object as? UUID,
+                  let ws = manager.workspaces.first(where: { $0.id == wsID }) else { return }
+            manager.togglePin(ws)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ghostset.toggleArchive"))) { notification in
+            guard let wsID = notification.object as? UUID,
+                  let ws = manager.workspaces.first(where: { $0.id == wsID }) else { return }
+            manager.toggleArchive(ws)
+        }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ghostset.showDiffView"))) { _ in
             showingDiffView = true
         }

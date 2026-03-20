@@ -2,7 +2,7 @@
 
 ## Overview
 
-A custom per-workspace tab bar that provides independent tab groups for each workspace. Each workspace maintains its own set of tabs (shells, agents), and switching workspaces in the sidebar switches the entire tab set. The tab bar visually matches Ghostty's native titlebar tabs — full-width equal-split capsule tabs with left-aligned close buttons, centered titles, and right-aligned ⌘N shortcut labels. Tab titles sync automatically from the terminal surface's title (set by the pty via escape codes).
+A custom per-workspace tab bar providing independent tab groups for each workspace. Each workspace maintains its own tabs (shells, agents), and switching workspaces swaps the tab set. The tab bar visually matches Ghostty's native titlebar tabs — full-width equal-split capsule tabs with left-aligned close buttons, centered titles, and right-aligned shortcut labels. Tab titles sync from the terminal surface's pty title. Tabs support drag-to-reorder, pinning, custom colors/icons, and context menus.
 
 ## Architecture
 
@@ -10,236 +10,150 @@ A custom per-workspace tab bar that provides independent tab groups for each wor
 
 | File | Role |
 |------|------|
-| `WorkspaceTabBar.swift` | SwiftUI view rendering the tab bar UI |
-| `WorkspaceViewModelCache.swift` | `WorkspaceTabGroup` model managing per-workspace tab state, `WorkspaceTabEntry` per-tab data |
-| `WorkspaceWindow.swift` | Hosts the tab bar in `WorkspaceDetailContent`, creates tabs via `addNewTab()` |
-| `WorkspaceWindowController.swift` | Intercepts Cmd+T for new tabs, Cmd+1-9 for tab switching, Ghostty core new-tab notifications |
+| `WorkspaceTabBar.swift` | SwiftUI tab bar view with drag, pin, color, context menu |
+| `WorkspaceViewModelCache.swift` | `WorkspaceTabGroup` + `WorkspaceTabEntry` data models |
+| `WorkspaceWindow.swift` | Hosts tab bar, wires callbacks, manages title sync timer |
+| `WorkspaceWindowController.swift` | Cmd+1-9/Cmd+W/Cmd+T keyboard intercepts |
 
 ### Data Models
 
-#### `WorkspaceTabEntry`
-```swift
-struct WorkspaceTabEntry: Identifiable {
-    let id: UUID
-    var title: String          // Synced from surface.title
-    let viewModel: WorkspaceTerminalViewModel  // Owns the SplitTree<SurfaceView>
-    var agent: AgentType?      // Non-nil for agent tabs (title not overridden)
-    var sessionID: String?     // Agent session ID for resume
-}
-```
+#### WorkspaceTabEntry
+| Property | Type | Purpose |
+|----------|------|---------|
+| `id` | `UUID` | Unique tab identifier |
+| `title` | `String` | Display title (synced from surface, starts empty) |
+| `viewModel` | `WorkspaceTerminalViewModel` | Owns the terminal's `SplitTree<SurfaceView>` |
+| `agent` | `AgentType?` | Non-nil for agent tabs (title not auto-overridden) |
+| `sessionID` | `String?` | Agent session ID for resume |
+| `isPinned` | `Bool` | Pinned tabs can't be closed, shown as compact icon |
+| `colorName` | `String?` | Custom tab color (tinted background + bottom indicator) |
+| `iconOverride` | `String?` | Custom SF Symbol icon |
 
-#### `WorkspaceTabGroup`
-```swift
-class WorkspaceTabGroup: ObservableObject {
-    @Published var tabs: [WorkspaceTabEntry]
-    @Published var activeTabID: UUID?
-}
-```
+#### WorkspaceTabGroup
+| Method | Purpose |
+|--------|---------|
+| `addTab(_:activate:)` | Add tab, optionally make active |
+| `closeTab(id:)` | Remove tab, activate nearest neighbor |
+| `selectTab(id:)` | Switch active tab by UUID |
+| `selectTab(at:)` | Switch active tab by index (keyboard) |
+| `togglePin(id:)` | Pin/unpin, moves pinned tabs to front |
+| `setTabColor(id:color:)` | Set custom color |
+| `setTabIcon(id:icon:)` | Set custom icon |
+| `moveTab(id:toIndex:)` | Reorder tab |
+| `updateActiveTabTitle(_:)` | Update title (skips agent tabs) |
+| `syncTabTitlesFromSurfaces()` | Sync all titles from terminal surfaces |
 
-### Feature Connections
-
-- **WorkspaceViewModelCache** — caches one `WorkspaceTabGroup` per workspace UUID. Switching workspaces swaps which tab group is displayed.
-- **WorkspaceSplitDelegate** — subscribes to active surface's `$title` publisher for tab name updates.
-- **WorkspaceWindowController** — intercepts keyboard events (Cmd+1-9, Cmd+T) before Ghostty's core.
-- **TerminalView** — each tab's `WorkspaceTerminalViewModel.surfaceTree` is rendered by a `TerminalView`.
-- **AgentPresetsBar** — launches agents into new tabs via `onLaunchAgent`.
-
-## Current Implementation
-
-### Tab Bar Layout
+## Tab Bar Layout
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│ ✕  title-from-pty    ⌘1 │     title-from-pty    ⌘2 │  +   │
-└──────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│ [pin] │ ✕  title...  ⌘1 │ ✕  ✦ claude  ⌘2 │ ✕  title  ⌘3 │ + │
+│ 40px  │     equal-width     │    equal-width    │  equal-width  │   │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-- Tabs fill available width equally (`frame(maxWidth: .infinity)`)
-- Active tab has capsule background (`Color.primary.opacity(0.1)`)
-- Close button (✕) is **left-aligned** and always visible (prevents layout reflow)
-- Title is **centered** with `.lineLimit(1)` and `.truncationMode(.tail)`
-- Shortcut label (⌘N) is **right-aligned**
-- Agent tabs show agent icon with color before the title
-- "+" button is fixed-width at the end
+- **≤6 tabs**: fill width equally (`maxWidth: .infinity`)
+- **>6 tabs**: scroll horizontally (`maxWidth: 220`)
+- **Pinned tabs**: compact 40px, show only agent icon or pin icon
+- **Close (✕)**: left-aligned, always visible (prevents layout reflow)
+- **Title**: centered, truncated with `.tail`, empty shows "…"
+- **Shortcut (⌘N)**: right-aligned for tabs 1-9
+- **Active tab**: capsule background `Color.primary.opacity(0.1)`
+- **Tab bar hidden**: when only 1 tab (Cmd+T to add)
 
-### Tab Bar Visibility
+## Keyboard Shortcuts
 
-The tab bar only renders when `tabGroup.tabs.count > 1`. With a single tab, the terminal fills the full detail area.
+| Shortcut | Action | Implementation |
+|----------|--------|----------------|
+| `⌘T` | New tab | Controller posts `.ghostsetNewWorkspaceTab` |
+| `⌘1-⌘9` | Switch tab | `NSEvent` local monitor → `selectTab(at:)` |
+| `⌘W` | Close tab | `NSEvent` monitor → `closeTab(id:)` (skips pinned, falls through to window close with 1 tab) |
+| `⌘D` | Split (Ghostty) | Handled by `WorkspaceSplitDelegate` |
 
-### Title Syncing
+## Title Sync
 
-Tab titles are synced from the terminal surface via a 300ms timer:
+- 300ms timer calls `syncTabTitlesFromSurfaces()` on the active `TerminalView`
+- Reads raw `surface.title` from each tab's surface — same title Ghostty uses
+- **500ms stability threshold**: title only applies after being stable for 500ms (prevents flicker when terminal rapidly changes titles)
+- Agent tabs never have title overridden
+- New tabs start with empty title ("…" placeholder), filled by pty
+- `pwdDidChange` and `focusedSurfaceDidChange` also update titles as fallback
 
-```swift
-.onReceive(Timer.publish(every: 0.3, on: .main, in: .common).autoconnect()) { _ in
-    tabGroup.syncTabTitlesFromSurfaces()
-}
-```
+## Context Menu (right-click)
 
-`syncTabTitlesFromSurfaces()` iterates all non-agent tabs and reads `surface.title` directly. Agent tabs keep their agent name and are never overridden.
+| Action | Behavior |
+|--------|----------|
+| Close Tab | Closes tab (disabled if pinned or last tab) |
+| Close Other Tabs | Closes all except this (skips pinned) |
+| Close Tabs to the Right | Closes tabs after this (skips pinned) |
+| Pin/Unpin Tab | Toggles pin state |
+| Move Left/Right | Reorders via context menu |
+| Tab Color | Submenu: None + 8 colors (blue, green, orange, red, purple, teal, pink, indigo) |
+| Tab Icon | Submenu: Default + 8 icons (Terminal, Web, Server, Build, Test, Docs, Debug, Script) |
+| Detach to Window | Removes tab, creates standalone Ghostty `TerminalController` with the surface tree |
+| Move to Workspace | Submenu listing all workspaces — closes tab here, creates fresh tab in target workspace |
+| Duplicate Tab | Creates new tab |
+| New Shell Tab | Creates new tab |
 
-New tabs start with an empty title (`""`) and get populated when the terminal sets its title via pty escape codes — matching Ghostty's native behavior.
+## Tab Pinning
 
-### Keyboard Shortcuts
+- Pinned tabs show compact (40px) with just the agent icon or pin icon
+- No title, no close button, no shortcut label
+- Can't be closed with ✕ or Cmd+W
+- Auto-sorted to the left when pinned
+- "Close Others" and "Close Right" skip pinned tabs
 
-| Shortcut | Action | Handler |
-|----------|--------|---------|
-| `⌘T` | New tab in current workspace | `WorkspaceWindowController.newTab(_:)` → posts `.ghostsetNewWorkspaceTab` |
-| `⌘1` - `⌘9` | Switch to tab N | `NSEvent.addLocalMonitorForEvents` in controller, calls `group.selectTab(at:)` |
-| `⌘W` | Close current tab (if >1) or window | Ghostty core handles this |
+## Tab Colors
 
-The Cmd+1-9 handler:
-- Only activates when the workspace has 2+ tabs
-- Checks `event.window == self.window` to scope to the correct window
-- Returns `nil` to consume the event (prevents Ghostty's core from handling it)
-- Only fires for Cmd (no Shift, no Option modifiers)
+- Active colored tab: tinted capsule background (`color.opacity(0.12)`) + 2px colored bottom indicator
+- Color picker in context menu with 8 options
+- Custom icon inherits tab color if set
 
-### Tab Creation Flow
+## Drag-to-Reorder
 
-1. User presses Cmd+T or clicks "+" in tab bar
-2. `WorkspaceWindowController.newTab(_:)` posts `.ghostsetNewWorkspaceTab`
-3. `WorkspaceWindow` receives notification, calls `addNewTab(agent:)`
-4. `addNewTab` calls `vmCache.createTab(for: workspace, ...)` with empty title
-5. `WorkspaceViewModelCache.createTab()` creates a `WorkspaceTerminalViewModel` with a new `SurfaceView`
-6. If agent is specified, `config.initialInput = agent.launchCommand + "\n"` launches the agent
-7. Tab entry is added to the workspace's `WorkspaceTabGroup`
-8. SwiftUI re-renders the tab bar
+- `onDrag` provides tab UUID via `NSItemProvider` as plain text
+- `onDrop` with `TabDropDelegate` swaps tabs on `dropEntered`
+- Dragged tab dims to 40% opacity
+- Animated with 200ms ease-in-out
+- **Known issue**: dropping on terminal pastes UUID text (acceptable trade-off)
 
-### Tab Close Flow
+## Session Persistence
 
-1. User clicks ✕ on a tab
-2. `onCloseTab` callback fires with tab UUID
-3. `WorkspaceTabGroup.closeTab(id:)` removes the entry
-4. If the closed tab was active, activates the nearest remaining tab
-5. `bindActiveViewModel()` updates the split delegate and controller references
-
-### Agent Tab Behavior
-
-- Agent tabs show the agent icon (colored) before the title
-- Agent tab titles use `agent.displayName` and are **not overridden** by surface title sync
-- When created with a task description, the task is sent as initial input after the agent command
-
-### Native Tab Suppression
-
-Native macOS tabs are disabled on the workspace window:
-```swift
-window.tabbingMode = .disallowed
-```
-
-The `onGhosttyNewTab` notification from Ghostty's core is intercepted and routed to the custom tab system instead of creating native tabs.
-
-## UI Specifications
-
-### Dimensions
-
-| Element | Value |
-|---------|-------|
-| Tab bar height | ~34px (3px vertical padding + 28px content) |
-| Tab horizontal padding | 4px outer, 6-8px inner |
-| Close button size | 16×16px |
-| Close icon size | 8pt, weight: bold |
-| Title font | 12pt system |
-| Shortcut font | 9pt monospaced |
-| Agent icon | 9pt |
-| "+" button | 32×28px |
-| Tab spacing | 2px between tabs |
-
-### Colors
-
-| Element | Color |
-|---------|-------|
-| Active tab background | `Color.primary.opacity(0.1)` capsule |
-| Inactive tab background | Clear |
-| Active title | `.primary` |
-| Inactive title | `.secondary` |
-| Close button | `.tertiary` |
-| Shortcut (active) | `.tertiary` |
-| Shortcut (inactive) | `.quaternary` |
-| Agent icon | `AgentColors.color(for: agent)` |
-| "+" button | `.secondary` |
-
-## Design Consistency
-
-### Matches Ghostty Native Tabs
-- Full-width equal-split layout ✓
-- Capsule/pill shape for active tab ✓
-- Close button left-aligned, always visible ✓
-- ⌘N shortcut labels ✓
-- Title centered ✓
-- Tabs start blank, title fills from pty ✓
-
-### Differences from Ghostty Native Tabs
-- Custom SwiftUI implementation (not NSWindow tab groups)
-- Per-workspace tab groups (native tabs are per-window)
-- No drag-to-reorder (native tabs support this)
-- No drag-to-tear-off (native tabs create new windows)
-- No tab overview mode
-
-## Ghostty Codebase Alignment
-
-### Types Used
-- `Ghostty.SurfaceView` — terminal surface, `$title` publisher
-- `Ghostty.SurfaceConfiguration` — `initialInput` for agent launch, `workingDirectory`
-- `Ghostty.Notification.ghosttyNewTab` — intercepted to route to custom tabs
-- `TerminalView` — renders the active tab's surface tree
-- `SplitTree<Ghostty.SurfaceView>` — owned by each tab's `WorkspaceTerminalViewModel`
-- `AgentType` — determines agent icon and whether title sync is suppressed
-
-### Integration Points
-- `WorkspaceWindowController` registers `NSEvent` local monitor for Cmd+1-9
-- Ghostty core's `ghosttyNewTab` notification is intercepted (surface window check)
-- `TerminalViewDelegate.focusedSurfaceDidChange` updates tab titles
-- `TerminalViewDelegate.pwdDidChange` also updates tab titles as fallback
+- Tabs auto-save to `~/.ghostset/sessions/{workspaceID}.json`
+- Save triggers: new tab, close tab, workspace switch, every 30 seconds, app quit
+- Saves: title, agent, sessionID, splitLayout (with working directory from `surface.pwd`)
+- Restores: recreates tabs with correct working directories and agent resume commands
+- Split delegate rebinds `viewModel` on tab switch (ensures splits work on active tab)
 
 ## Known Issues
 
-1. **Title sync uses polling (300ms timer)** — not event-driven. Uses 500ms stability threshold to prevent flicker. Combine `$title` subscriber was unreliable due to surface lifecycle timing.
-2. **`selectTab(id:)` vs `selectTab(at:)`** — two selection methods with different semantics (UUID vs index). Both are needed (UI uses id, keyboard uses index).
-
-## Implemented Features
-
-### Keyboard Shortcuts
-- **⌘T** — new tab in current workspace
-- **⌘1-⌘9** — switch to tab N (intercepted via `NSEvent.addLocalMonitorForEvents`, monitor stored and cleaned up in deinit)
-- **⌘W** — close active tab when multiple tabs exist; falls through to window close with single tab
-
-### Tab Context Menu (right-click)
-- Close Tab
-- Close Other Tabs
-- Close Tabs to the Right
-- Duplicate Tab
-- New Shell Tab
-
-### Tab Bar Visibility
-Tab bar is always visible (even with single tab) so the "+" button is always accessible.
-
-### Title Stability
-Titles only update after 500ms of stability — prevents flickering when the terminal rapidly changes titles (e.g., Claude Code alternating between path and app name).
-
-### Drag-to-Reorder
-Tabs support drag-and-drop reordering within the tab bar. Dragging provides the tab's UUID as `NSItemProvider` data; dropping moves the tab to the new position in the group.
+1. **Title sync polling** — 300ms timer, not event-driven. Combine subscriber was unreliable.
+2. **Drag drops UUID on terminal** — `NSItemProvider` with `.utf8PlainText` can paste into terminal if dropped outside tab bar.
+3. **Two `selectTab` methods** — `selectTab(id:)` for UI, `selectTab(at:)` for keyboard. Both needed.
 
 ## Future Enhancements
 
-- **Drag-to-tear-off** — dragging a tab out creates a new workspace window
-- **Tab pinning** — pin tabs that can't be closed and stay at the left
-- **Tab preview on hover** — show a thumbnail of the terminal content
-- **Event-driven title sync** — replace timer with proper Combine subscription when surface lifecycle is more predictable
-- **Tab overflow** — scroll or dropdown when too many tabs to fit
-- **Tab color/icon customization** — let users set per-tab colors or icons
-- **Move to workspace** — context menu option to move a tab to a different workspace
+- **Drag-to-tear-off** — physical drag outside tab bar creates Ghostty window (currently context menu only)
+- **Tab preview on hover** — thumbnail of terminal content
+- **Event-driven title sync** — replace timer with Combine when surface lifecycle allows
+- **Tab overflow indicator** — show count of hidden tabs when scrolling
+- **Tab groups/nesting** — group related tabs within a workspace
 
 ## Changelog
 
-- 2026-03-20: Initial spec created
-- 2026-03-20: Switched from native macOS tabs to custom tab bar (native tabs don't support per-workspace tab groups)
-- 2026-03-20: Added full-width equal-split layout matching Ghostty's native tab style
-- 2026-03-20: Added left-aligned close buttons to prevent layout reflow
-- 2026-03-20: Added Cmd+1-9 keyboard shortcuts via NSEvent local monitor
-- 2026-03-20: Tab titles sync from raw surface title (no shortening), start blank like Ghostty
-- 2026-03-20: Fixed — Cmd+W closes tab (not window) when multiple tabs exist
-- 2026-03-20: Fixed — Tab bar always visible (single tab shows "+" button)
-- 2026-03-20: Fixed — Event monitor stored and removed in deinit
-- 2026-03-20: Fixed — Title flicker prevented with 500ms stability threshold
-- 2026-03-20: Added tab context menu (Close, Close Others, Close Right, Duplicate)
-- 2026-03-20: Added drag-to-reorder tabs
+- 2026-03-20: Initial spec
+- 2026-03-20: Switched from native macOS tabs to custom tab bar
+- 2026-03-20: Full-width equal-split layout matching Ghostty native style
+- 2026-03-20: Left-aligned close buttons prevent layout reflow
+- 2026-03-20: Cmd+1-9 keyboard shortcuts, Cmd+W tab close
+- 2026-03-20: Tab titles sync from raw surface title, start blank
+- 2026-03-20: 500ms title stability threshold prevents flicker
+- 2026-03-20: Tab pinning with compact display
+- 2026-03-20: Tab colors and custom icons
+- 2026-03-20: Context menu with close/pin/color/icon/detach/move
+- 2026-03-20: Drag-to-reorder with custom UTType (reverted to plain text)
+- 2026-03-20: Detach to Window creates standalone Ghostty TerminalController
+- 2026-03-20: Move to Workspace creates fresh tab in target
+- 2026-03-20: Auto-save sessions on tab changes + every 30 seconds
+- 2026-03-20: Working directories persist from surface.pwd
+- 2026-03-20: Split delegate rebinds on tab switch (fixes Cmd+D after tab switch)

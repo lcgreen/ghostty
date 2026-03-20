@@ -11,6 +11,8 @@ struct WorkspaceTabEntry: Identifiable {
     var isPinned: Bool = false
     var colorName: String?
     var iconOverride: String?
+    /// ID of the last focused surface in this tab (for restoring focus on tab switch).
+    var lastFocusedSurfaceID: UUID?
 
     init(title: String = "", viewModel: WorkspaceTerminalViewModel, agent: AgentType? = nil, sessionID: String? = nil) {
         self.id = UUID()
@@ -49,27 +51,29 @@ class WorkspaceTabGroup: ObservableObject {
         }
     }
 
-    /// Sync all tab titles from their surface views — use the raw title as-is.
+    /// Sync all tab titles from their focused surface view.
+    /// Uses the focused surface (last responder) or falls back to first surface.
     /// Only updates if the surface title has been stable (not changing rapidly).
     private var lastSeenTitles: [UUID: (title: String, since: Date)] = [:]
 
     func syncTabTitlesFromSurfaces() {
         let now = Date()
         for i in tabs.indices {
-            // Skip agent tabs — they keep their agent name
             guard tabs[i].agent == nil else { continue }
-            guard let surface = tabs[i].viewModel.surfaceTree.first(where: { _ in true }) else { continue }
+
+            // Find the focused surface (first responder) or fall back to first surface
+            let surface = tabs[i].viewModel.focusedSurface
+                ?? tabs[i].viewModel.surfaceTree.first(where: { _ in true })
+            guard let surface else { continue }
             let surfaceTitle = surface.title
             guard !surfaceTitle.isEmpty else { continue }
 
             let tabID = tabs[i].id
             if let last = lastSeenTitles[tabID], last.title == surfaceTitle {
-                // Title has been stable — apply it if different from current tab title
                 if now.timeIntervalSince(last.since) > 0.5 && tabs[i].title != surfaceTitle {
                     tabs[i].title = surfaceTitle
                 }
             } else {
-                // Title changed — record it, don't apply yet (wait for stability)
                 lastSeenTitles[tabID] = (title: surfaceTitle, since: now)
             }
         }

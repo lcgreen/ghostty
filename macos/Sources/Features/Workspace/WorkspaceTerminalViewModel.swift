@@ -12,6 +12,9 @@ final class WorkspaceTerminalViewModel: ObservableObject, TerminalViewModel {
     /// Whether the command palette is showing.
     @Published var commandPaletteIsShowing: Bool = false
 
+    /// The currently focused surface (for tab title sync in splits).
+    weak var focusedSurface: Ghostty.SurfaceView?
+
     /// Update overlay (not used in workspace context).
     var updateOverlayIsVisible: Bool { false }
 }

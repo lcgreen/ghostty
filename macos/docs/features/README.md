@@ -17,8 +17,8 @@ Living documentation for every feature in the Ghostset workspace orchestration l
 | 09 | [Workspace Settings](09-workspace-settings.md) | Env profiles, setup commands, shell config | `WorkspaceSettingsPopover.swift` |
 | 10 | [Notifications](10-notifications.md) | macOS notifications, unread badges | `WorkspaceNotifier.swift` |
 | 11 | [Workspace Persistence](11-workspace-persistence.md) | State, sessions, window state, restoration | `WorkspacePersistence.swift` |
-| 12 | [Native Tab Integration](12-native-tab-integration.md) | Window controller, split delegate, session persistence | `WorkspaceWindowController.swift`, `WorkspaceWindow.swift` |
-| 13 | [Workspace Tab Bar](13-workspace-tab-bar.md) | Per-workspace custom tabs matching Ghostty's native style | `WorkspaceTabBar.swift`, `WorkspaceViewModelCache.swift` |
+| 12 | [Workspace Window & Controller](12-native-tab-integration.md) | NSWindowController, split delegate, session persistence | `WorkspaceWindowController.swift`, `WorkspaceWindow.swift` |
+| 13 | [Workspace Tab Bar](13-workspace-tab-bar.md) | Per-workspace tabs with drag, pin, color, split, persistence | `WorkspaceTabBar.swift`, `WorkspaceViewModelCache.swift` |
 
 ## Architecture Overview
 

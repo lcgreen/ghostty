@@ -252,7 +252,28 @@ private struct WorkspaceDetailContent: View {
                 .onReceive(Timer.publish(every: 0.3, on: .main, in: .common).autoconnect()) { _ in
                     tabGroup.syncTabTitlesFromSurfaces()
                 }
-                .id(tabGroup.activeTabID)
+                .onChange(of: tabGroup.activeTabID) { _ in
+                    // Rebind split delegate when switching tabs
+                    if let vm = tabGroup.activeViewModel {
+                        splitDelegate.viewModel = vm
+
+                        // Restore focus to the last focused surface in this tab
+                        if let activeTab = tabGroup.activeTab,
+                           let surfaceID = activeTab.lastFocusedSurfaceID,
+                           let surface = vm.surfaceTree.first(where: { $0.id == surfaceID }) {
+                            vm.focusedSurface = surface
+                            // Delay to let SwiftUI finish the view update
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                surface.window?.makeFirstResponder(surface)
+                            }
+                        } else if let firstSurface = vm.surfaceTree.first(where: { _ in true }) {
+                            // No saved focus — focus the first surface
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                firstSurface.window?.makeFirstResponder(firstSurface)
+                            }
+                        }
+                    }
+                }
             }
 
             Divider()
@@ -372,12 +393,26 @@ final class WorkspaceSplitDelegate: NSObject, ObservableObject, TerminalViewDele
     func focusedSurfaceDidChange(to: Ghostty.SurfaceView?) {
         guard let s = to, let w = s.window else { return }
         let title = s.title.isEmpty ? "Shell" : s.title
+
+        // Track focused surface on the view model (for tab title sync)
+        viewModel?.focusedSurface = s
+
+        // Store on the tab entry — only if the surface belongs to the active tab's tree
+        if let vm = viewModel, vm.surfaceTree.contains(s),
+           let w = s.window,
+           let c = w.windowController as? WorkspaceWindowController,
+           let group = c.activeTabGroup,
+           let activeID = group.activeTabID,
+           let idx = group.tabs.firstIndex(where: { $0.id == activeID }),
+           group.tabs[idx].viewModel === vm {
+            group.tabs[idx].lastFocusedSurfaceID = s.id
+        }
+
         if let c = w.windowController as? WorkspaceWindowController {
             if c.titleOverride == nil {
                 w.title = title
             }
             c.activeTabGroup?.updateActiveTabTitle(title)
-            // Subscribe to future title changes on this surface
             observeSurfaceTitle(s, tabGroup: c.activeTabGroup)
         }
     }
