@@ -19,6 +19,7 @@ Living documentation for every feature in the Ghostset workspace orchestration l
 | 11 | [Workspace Persistence](11-workspace-persistence.md) | State, sessions, window state, restoration | `WorkspacePersistence.swift` |
 | 12 | [Workspace Window & Controller](12-native-tab-integration.md) | NSWindowController, split delegate, session persistence | `WorkspaceWindowController.swift`, `WorkspaceWindow.swift` |
 | 13 | [Workspace Tab Bar](13-workspace-tab-bar.md) | Per-workspace tabs with drag, pin, color, split, persistence | `WorkspaceTabBar.swift`, `WorkspaceViewModelCache.swift` |
+| 14 | [Template Layouts](14-template-layouts.md) | Full workspace snapshots: tabs, splits, commands, auto-run | `WorkspaceTemplate.swift`, `TemplateManagerView.swift` |
 
 ## Architecture Overview
 

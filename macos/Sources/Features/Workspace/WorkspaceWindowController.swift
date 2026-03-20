@@ -293,7 +293,7 @@ class WorkspaceWindowController: NSWindowController, NSWindowDelegate, NSMenuIte
 
             let tabStates = group.tabs.compactMap { tab -> TabSessionState? in
                 guard let layout = SplitLayout.from(tree: tab.viewModel.surfaceTree) else { return nil }
-                return TabSessionState(title: tab.title, splitLayout: layout, agent: tab.agent, sessionID: tab.sessionID)
+                return TabSessionState(title: tab.title, splitLayout: layout, agent: tab.agent, sessionID: tab.sessionID, isPinned: tab.isPinned, colorName: tab.colorName, iconOverride: tab.iconOverride)
             }
             guard !tabStates.isEmpty else { continue }
 

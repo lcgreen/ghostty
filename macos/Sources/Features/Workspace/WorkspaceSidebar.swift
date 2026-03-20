@@ -3,6 +3,7 @@ import SwiftUI
 struct WorkspaceSidebar: View {
     @ObservedObject var manager: WorktreeManager
     @Binding var selectedWorkspaceID: UUID?
+    var activeTabGroup: WorkspaceTabGroup?
 
     @State private var showingNewWorkspace = false
     @State private var workspaceToDelete: Workspace?
@@ -98,8 +99,16 @@ struct WorkspaceSidebar: View {
             }
         }
         .sheet(isPresented: $showingNewWorkspace) {
-            NewWorkspaceSheet(manager: manager) { workspace in
+            NewWorkspaceSheet(manager: manager) { workspace, template in
                 selectedWorkspaceID = workspace.id
+                // Apply template layout after workspace is created
+                if let template, !template.tabs.isEmpty {
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ghostset.applyTemplate"),
+                        object: nil,
+                        userInfo: ["template": template, "workspaceID": workspace.id]
+                    )
+                }
             }
         }
         .sheet(isPresented: $showingDiffView) {
@@ -574,7 +583,8 @@ struct WorkspaceSidebar: View {
         }
 
         Button("Save as Template") {
-            manager.saveAsTemplate(workspace)
+            let group = workspace.id == selectedWorkspaceID ? activeTabGroup : nil
+            manager.saveAsTemplate(workspace, tabGroup: group)
         }
 
         Button("Open in VS Code") {

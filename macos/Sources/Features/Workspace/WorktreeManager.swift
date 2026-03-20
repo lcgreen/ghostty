@@ -498,8 +498,13 @@ final class WorktreeManager: ObservableObject {
         }
     }
 
-    func saveAsTemplate(_ workspace: Workspace) {
-        let template = WorkspaceTemplate.from(workspace: workspace)
+    func saveAsTemplate(_ workspace: Workspace, tabGroup: WorkspaceTabGroup? = nil) {
+        let template: WorkspaceTemplate
+        if let tabGroup {
+            template = WorkspaceTemplate.snapshot(workspace: workspace, tabGroup: tabGroup)
+        } else {
+            template = WorkspaceTemplate.from(workspace: workspace)
+        }
         saveTemplate(template)
     }
 

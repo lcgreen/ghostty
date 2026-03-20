@@ -3,7 +3,7 @@ import SwiftUI
 /// Unified workspace creation sheet — compact, clean.
 struct NewWorkspaceSheet: View {
     @ObservedObject var manager: WorktreeManager
-    let onCreated: (Workspace) -> Void
+    let onCreated: (Workspace, WorkspaceTemplate?) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
@@ -27,6 +27,7 @@ struct NewWorkspaceSheet: View {
         .appendingPathComponent(".ghostset/projects").path
     @State private var isAddingRepo = false
     @State private var isCreating = false
+    @State private var selectedTemplate: WorkspaceTemplate?
     @State private var isCloning = false
     @State private var errorMessage: String?
     @State private var userToggledTags = false
@@ -177,6 +178,7 @@ struct NewWorkspaceSheet: View {
     }
 
     private func applyTemplate(_ template: WorkspaceTemplate) {
+        selectedTemplate = template.tabs.isEmpty ? nil : template
         if let agent = template.agent { selectedAgent = agent }
         if let repo = template.repoPath, !repo.isEmpty { repoPath = repo; loadBranches(for: repo) }
         baseBranch = template.baseBranch
@@ -492,7 +494,7 @@ struct NewWorkspaceSheet: View {
                     agent: selectedAgent, tags: tags,
                     taskDescription: task.isEmpty ? nil : task
                 )
-                dismiss(); onCreated(ws)
+                dismiss(); onCreated(ws, selectedTemplate)
             } catch { errorMessage = error.localizedDescription; isCreating = false }
         }
     }

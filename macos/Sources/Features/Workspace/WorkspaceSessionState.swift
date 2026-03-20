@@ -24,13 +24,41 @@ struct TabSessionState: Codable {
     let splitLayout: SplitLayout
     let agent: AgentType?
     let sessionID: String?
+    let isPinned: Bool
+    let colorName: String?
+    let iconOverride: String?
 
-    init(id: UUID = UUID(), title: String = "Shell", splitLayout: SplitLayout = .leaf(LeafState()), agent: AgentType? = nil, sessionID: String? = nil) {
+    init(
+        id: UUID = UUID(),
+        title: String = "",
+        splitLayout: SplitLayout = .leaf(LeafState()),
+        agent: AgentType? = nil,
+        sessionID: String? = nil,
+        isPinned: Bool = false,
+        colorName: String? = nil,
+        iconOverride: String? = nil
+    ) {
         self.id = id
         self.title = title
         self.splitLayout = splitLayout
         self.agent = agent
         self.sessionID = sessionID
+        self.isPinned = isPinned
+        self.colorName = colorName
+        self.iconOverride = iconOverride
+    }
+
+    // Backward-compatible decoding
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
+        splitLayout = try container.decode(SplitLayout.self, forKey: .splitLayout)
+        agent = try container.decodeIfPresent(AgentType.self, forKey: .agent)
+        sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
+        isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        colorName = try container.decodeIfPresent(String.self, forKey: .colorName)
+        iconOverride = try container.decodeIfPresent(String.self, forKey: .iconOverride)
     }
 }
 
@@ -44,9 +72,19 @@ indirect enum SplitLayout: Codable {
 /// A terminal leaf in the persisted split tree.
 struct LeafState: Codable {
     let workingDirectory: String?
+    /// The last terminal title — used to suggest re-running the last command on restore.
+    let lastTitle: String?
 
-    init(workingDirectory: String? = nil) {
+    init(workingDirectory: String? = nil, lastTitle: String? = nil) {
         self.workingDirectory = workingDirectory
+        self.lastTitle = lastTitle
+    }
+
+    // Backward-compatible decoding
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        workingDirectory = try container.decodeIfPresent(String.self, forKey: .workingDirectory)
+        lastTitle = try container.decodeIfPresent(String.self, forKey: .lastTitle)
     }
 }
 
@@ -71,7 +109,10 @@ extension SplitLayout {
     static func from(node: SplitTree<Ghostty.SurfaceView>.Node) -> SplitLayout {
         switch node {
         case .leaf(let surfaceView):
-            return .leaf(LeafState(workingDirectory: surfaceView.pwd))
+            return .leaf(LeafState(
+                workingDirectory: surfaceView.pwd,
+                lastTitle: surfaceView.title.isEmpty ? nil : surfaceView.title
+            ))
         case .split(let split):
             let dir: SplitDirection = switch split.direction {
             case .horizontal: .horizontal
@@ -111,6 +152,14 @@ extension SplitLayout {
                 config.initialInput = nil
             }
             isFirstLeaf = false
+
+            // Pre-fill last command for ALL leaves (agent or not)
+            // If no agent initialInput was set, use the last title as a command hint
+            if config.initialInput == nil, let title = leaf.lastTitle {
+                if !title.contains("@") && !title.hasPrefix("/") && !title.hasPrefix("~") {
+                    config.initialInput = title
+                }
+            }
             return .leaf(view: Ghostty.SurfaceView(app, baseConfig: config))
 
         case .split(let split):

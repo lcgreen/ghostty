@@ -171,7 +171,10 @@ final class WorkspaceViewModelCache: ObservableObject {
                     }
 
                     vm.surfaceTree = tabState.splitLayout.toSplitTree(app: app, baseConfig: config)
-                    let entry = WorkspaceTabEntry(title: tabState.title, viewModel: vm, agent: tabState.agent, sessionID: tabState.sessionID)
+                    var entry = WorkspaceTabEntry(title: tabState.title, viewModel: vm, agent: tabState.agent, sessionID: tabState.sessionID)
+                    entry.isPinned = tabState.isPinned
+                    entry.colorName = tabState.colorName
+                    entry.iconOverride = tabState.iconOverride
                     group.addTab(entry, activate: i == session.activeTabIndex)
                 }
             } else if let agent = workspace.agent, workspace.taskDescription != nil {
@@ -243,6 +246,128 @@ final class WorkspaceViewModelCache: ObservableObject {
         if let def = defaultGroup { result.append((nil, def)) }
         for (id, group) in cache { result.append((id, group)) }
         return result
+    }
+
+    /// Apply a template layout to a workspace — creates tabs with splits and commands.
+    func applyTemplate(
+        _ template: WorkspaceTemplate,
+        for workspace: Workspace?,
+        app: ghostty_app_t,
+        baseConfig: Ghostty.SurfaceConfiguration? = nil
+    ) {
+        guard !template.tabs.isEmpty else { return }
+        guard let workspace else { return }
+
+        // Remove the default tab if one was auto-created
+        let group = tabGroup(for: workspace, app: app, baseConfig: baseConfig)
+        if group.tabs.count == 1 && group.tabs.first?.agent == nil {
+            if let firstID = group.tabs.first?.id {
+                group.closeTab(id: firstID)
+            }
+        }
+
+        for templateTab in template.tabs {
+            let vm = WorkspaceTerminalViewModel()
+
+            // Build surface tree from layout or flat splits
+            if let layout = templateTab.layout {
+                // Recursive layout
+                vm.surfaceTree = Self.buildTree(
+                    from: layout, app: app, baseConfig: baseConfig,
+                    worktreePath: workspace.worktreePath, agent: templateTab.agent
+                )
+            } else {
+                // Simple: main pane + flat splits
+                var config = baseConfig ?? Ghostty.SurfaceConfiguration()
+                if let agent = templateTab.agent {
+                    config.initialInput = agent.launchCommand + "\n"
+                } else if let command = templateTab.command {
+                    config.initialInput = command + (templateTab.autoRun ? "\n" : "")
+                }
+                vm.surfaceTree = SplitTree(view: Ghostty.SurfaceView(app, baseConfig: config))
+
+                // Add flat splits
+                for split in templateTab.splits {
+                    var splitConfig = baseConfig ?? Ghostty.SurfaceConfiguration()
+                    if let subdir = split.subdirectory {
+                        splitConfig.workingDirectory = "\(workspace.worktreePath)/\(subdir)"
+                    }
+                    if let command = split.command {
+                        splitConfig.initialInput = command + (split.autoRun ? "\n" : "")
+                    }
+                    let dir: SplitTree<Ghostty.SurfaceView>.NewDirection =
+                        split.direction == .horizontal ? .right : .down
+                    let newSurface = Ghostty.SurfaceView(app, baseConfig: splitConfig)
+                    if let anchor = vm.surfaceTree.first(where: { _ in true }) {
+                        do {
+                            vm.surfaceTree = try vm.surfaceTree.inserting(
+                                view: newSurface, at: anchor, direction: dir
+                            )
+                        } catch {}
+                    }
+                }
+            }
+
+            var entry = WorkspaceTabEntry(
+                title: templateTab.title,
+                viewModel: vm,
+                agent: templateTab.agent
+            )
+            entry.isPinned = templateTab.isPinned
+            entry.colorName = templateTab.colorName
+            entry.iconOverride = templateTab.iconOverride
+            group.addTab(entry)
+        }
+    }
+
+    /// Build a SplitTree from a recursive TemplatePane.
+    private static func buildTree(
+        from pane: TemplatePane,
+        app: ghostty_app_t,
+        baseConfig: Ghostty.SurfaceConfiguration?,
+        worktreePath: String,
+        agent: AgentType?
+    ) -> SplitTree<Ghostty.SurfaceView> {
+        guard let root = buildNode(from: pane, app: app, baseConfig: baseConfig,
+                                    worktreePath: worktreePath, agent: agent, isFirst: true) else {
+            return SplitTree()
+        }
+        return SplitTree(root: root, zoomed: nil)
+    }
+
+    /// Recursively build a SplitTree.Node from a TemplatePane.
+    private static func buildNode(
+        from pane: TemplatePane,
+        app: ghostty_app_t,
+        baseConfig: Ghostty.SurfaceConfiguration?,
+        worktreePath: String,
+        agent: AgentType?,
+        isFirst: Bool
+    ) -> SplitTree<Ghostty.SurfaceView>.Node? {
+        switch pane {
+        case .terminal(let leaf):
+            var config = baseConfig ?? Ghostty.SurfaceConfiguration()
+            if let subdir = leaf.subdirectory {
+                config.workingDirectory = "\(worktreePath)/\(subdir)"
+            }
+            if isFirst, let agent {
+                config.initialInput = agent.launchCommand + "\n"
+            } else if let command = leaf.command {
+                config.initialInput = command + (leaf.autoRun ? "\n" : "")
+            }
+            return .leaf(view: Ghostty.SurfaceView(app, baseConfig: config))
+
+        case .split(let split):
+            let dir: SplitTree<Ghostty.SurfaceView>.Direction =
+                split.direction == .horizontal ? .horizontal : .vertical
+            guard let left = buildNode(from: split.first, app: app, baseConfig: baseConfig,
+                                        worktreePath: worktreePath, agent: agent, isFirst: isFirst),
+                  let right = buildNode(from: split.second, app: app, baseConfig: baseConfig,
+                                         worktreePath: worktreePath, agent: nil, isFirst: false) else {
+                return nil
+            }
+            return .split(.init(direction: dir, ratio: 0.5, left: left, right: right))
+        }
     }
 
     // MARK: - Private

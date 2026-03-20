@@ -6,6 +6,8 @@ struct TemplateManagerView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var editingTemplate: WorkspaceTemplate?
+    @State private var editingLayout: WorkspaceTemplate?
+    @State private var showingLayoutEditor = false
     @State private var showingNew = false
 
     @State private var formName = ""
@@ -24,6 +26,20 @@ struct TemplateManagerView: View {
         }
         .frame(width: 420, height: 400)
         .background(Color(nsColor: .windowBackgroundColor))
+        .sheet(isPresented: $showingLayoutEditor) {
+            if editingLayout != nil {
+                TemplateLayoutEditor(template: Binding(
+                    get: { editingLayout! },
+                    set: { editingLayout = $0 }
+                ))
+                .onDisappear {
+                    if let updated = editingLayout {
+                        manager.saveTemplate(updated)
+                    }
+                    editingLayout = nil
+                }
+            }
+        }
     }
 
     // MARK: - Header
@@ -128,6 +144,20 @@ struct TemplateManagerView: View {
             }
 
             Spacer()
+
+            // Layout preview
+            if !template.tabs.isEmpty {
+                TemplateLayoutPreview(template: template)
+                    .frame(width: 80, height: 24)
+            }
+
+            Button {
+                editingLayout = template
+                showingLayoutEditor = true
+            } label: {
+                Image(systemName: "rectangle.split.3x1").font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain).help("Edit Layout")
 
             Button { manager.saveTemplate(template.duplicated()) } label: {
                 Image(systemName: "doc.on.doc").font(.system(size: 10)).foregroundStyle(.secondary)

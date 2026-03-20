@@ -47,6 +47,19 @@ struct WorkspaceWindow: View {
                     bindActiveViewModel()
                     saveAllSessions()
                 }
+                .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ghostset.applyTemplate"))) { notification in
+                    guard let info = notification.userInfo,
+                          let template = info["template"] as? WorkspaceTemplate,
+                          let wsID = info["workspaceID"] as? UUID,
+                          wsID == selectedWorkspaceID,
+                          let app = ghostty.app else { return }
+                    let workspace = selectedWorkspace
+                    let config: Ghostty.SurfaceConfiguration? = workspace.map {
+                        WorkspaceWindowController.surfaceConfiguration(for: $0)
+                    }
+                    vmCache.applyTemplate(template, for: workspace, app: app, baseConfig: config)
+                    bindActiveViewModel()
+                }
                 // Auto-save sessions every 30 seconds
                 .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
                     saveAllSessions()
@@ -102,7 +115,8 @@ struct WorkspaceWindow: View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             WorkspaceSidebar(
                 manager: ghostty.workspaceManager,
-                selectedWorkspaceID: $selectedWorkspaceID
+                selectedWorkspaceID: $selectedWorkspaceID,
+                activeTabGroup: activeTabGroup
             )
             .navigationSplitViewColumnWidth(min: 200, ideal: 250, max: 350)
         } detail: {
@@ -199,7 +213,7 @@ struct WorkspaceWindow: View {
             // Save ALL tabs for this workspace
             let tabStates = group.tabs.compactMap { tab -> TabSessionState? in
                 guard let layout = SplitLayout.from(tree: tab.viewModel.surfaceTree) else { return nil }
-                return TabSessionState(title: tab.title, splitLayout: layout, agent: tab.agent, sessionID: tab.sessionID)
+                return TabSessionState(title: tab.title, splitLayout: layout, agent: tab.agent, sessionID: tab.sessionID, isPinned: tab.isPinned, colorName: tab.colorName, iconOverride: tab.iconOverride)
             }
             guard !tabStates.isEmpty else { continue }
             let session = WorkspaceSessionState(
