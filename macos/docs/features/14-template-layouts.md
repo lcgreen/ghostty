@@ -193,13 +193,24 @@ All template types use **compiler-synthesized** `Equatable`/`Hashable`. Never ad
 | `id` | string (UUID v4) | No | auto-generated | Stable identifier for the template |
 | `name` | string | Yes | — | Display name shown in the template picker |
 | `agent` | AgentType object | No | null | Default agent for new workspaces created from this template |
-| `baseBranch` | string | No | null | Git branch to use as the worktree base (e.g. `"main"`) |
+| `baseBranch` | string | No | `"main"` | Git branch to use as the worktree base. Empty = use workspace's branch |
 | `tags` | array of string | No | `[]` | Freeform labels for filtering |
-| `category` | string | No | `"Custom"` | Category shown in the template manager (e.g. `"Work"`, `"Personal"`) |
+| `category` | string | No | `"AI Agents"` | One of: `"AI Agents"`, `"Manual"`, `"CI/CD"`, `"Custom"` |
 | `onCreateCommand` | string | No | null | Shell script run after the workspace is created or the template is applied |
 | `onDestroyCommand` | string | No | null | Shell script run before the worktree is deleted |
-| `tabs` | array of TemplateTab | Yes | — | Ordered list of tabs to open |
+| `tabs` | array of TemplateTab | No | `[]` | Ordered list of tabs to open |
 | `variables` | array of TemplateVariable | No | `[]` | Named variables prompted at apply time |
+| `createdAt` | string (ISO 8601) | No | now | Creation timestamp (auto-set if omitted) |
+
+#### TemplateVariable
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `id` | string (UUID v4) | No | auto-generated | Stable identifier |
+| `name` | string | Yes | — | Variable name, referenced as `{{name}}` in commands and titles |
+| `defaultValue` | string | No | `""` | Pre-filled value shown in the prompt |
+| `description` | string | No | `""` | Help text shown below the input field |
+| `required` | bool | No | `false` | If true, user must provide a non-empty value |
 
 #### TemplateTab
 
@@ -305,8 +316,9 @@ The simplest valid template — one tab, no splits, no lifecycle commands:
     "variables": [
       {
         "name": "projectName",
-        "prompt": "Project display name",
-        "defaultValue": "MyApp"
+        "description": "Project display name",
+        "defaultValue": "MyApp",
+        "required": true
       }
     ],
     "tabs": [
@@ -391,7 +403,7 @@ Omitting `id` fields is also fine; they are auto-generated on import.
 
 **TemplatePane encoding** — The indirect enum encodes with a type wrapper: `{"terminal": {"_0": {...}}}` for leaf nodes and `{"split": {"_0": {...}}}` for split nodes. The `_0` key is the Swift synthesized associated-value label.
 
-**Variable substitution** — `{{name}}` placeholders in any string field are replaced with the value provided at apply time. Use `\{{` to emit a literal `{{`. Substitution is single-pass (variables in replacement values are not expanded again).
+**Variable substitution** — `{{name}}` placeholders in template name, tab titles, commands, subdirectories, and lifecycle scripts are replaced with the value provided at apply time. Use `\{{` to emit a literal `{{`. Substitution is single-pass (variables in replacement values are not expanded again).
 
 **`validated()` cleanup** — When a template is applied or imported, `validated()` removes agent-title-only tab commands (commands that match the agent name used as a display title), and clears degenerate flat splits that duplicate the main pane. This keeps snapshots captured from live workspaces clean.
 

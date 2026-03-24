@@ -16,11 +16,13 @@ enum TemplateVariableSubstitution {
     static func substituteTemplate(_ template: WorkspaceTemplate, values: [String: String]) -> WorkspaceTemplate {
         guard !values.isEmpty else { return template }
         var t = template
+        t.name = substitute(t.name, variables: values)
         t.onCreateCommand = t.onCreateCommand.map { substitute($0, variables: values) }
         t.onDestroyCommand = t.onDestroyCommand.map { substitute($0, variables: values) }
         t.setupCommand = t.setupCommand.map { substitute($0, variables: values) }
         t.tabs = t.tabs.map { tab in
             var tab = tab
+            tab.title = substitute(tab.title, variables: values)
             tab.command = tab.command.map { substitute($0, variables: values) }
             tab.splits = tab.splits.map { split in
                 var split = split

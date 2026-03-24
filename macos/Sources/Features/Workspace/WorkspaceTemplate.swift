@@ -190,7 +190,7 @@ struct WorkspaceTemplate: Codable, Identifiable, Hashable {
         category = try container.decodeIfPresent(TemplateCategory.self, forKey: .category) ?? .aiAgents
         tabs = try container.decodeIfPresent([TemplateTab].self, forKey: .tabs) ?? []
         variables = try container.decodeIfPresent([TemplateVariable].self, forKey: .variables) ?? []
-        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }
 
     /// Returns a cleaned-up copy of the template with invalid data fixed.
