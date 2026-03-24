@@ -191,6 +191,12 @@ final class WorktreeManager: ObservableObject {
         let parentDir = "\(Self.basePath)/\(repoName)"
         try ensureDirectory(at: parentDir)
 
+        // Validate base branch exists
+        let baseExists = await branchExists(baseBranch, in: repo)
+        guard baseExists else {
+            throw WorktreeError.creationFailed("Base branch '\(baseBranch)' does not exist in this repository")
+        }
+
         // Create the git worktree
         try await gitWorktreeAdd(
             repo: repo,
@@ -380,6 +386,13 @@ final class WorktreeManager: ObservableObject {
 
     private func gitBranchDelete(repo: String, branch: String) async throws {
         _ = try await shell("git", "-C", repo, "branch", "-d", branch)
+    }
+
+    func branchExists(_ branch: String, in repo: String) async -> Bool {
+        guard let result = try? await shell(
+            "git", "-C", repo, "rev-parse", "--verify", "refs/heads/\(branch)"
+        ) else { return false }
+        return result.exitCode == 0
     }
 
     // MARK: - Lifecycle Commands

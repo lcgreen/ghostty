@@ -10,7 +10,7 @@ struct NewWorkspaceSheet: View {
 
     @State private var workspaceName = ""
     @State private var taskDescription = ""
-    @State private var selectedAgent: AgentType = .claude
+    @State private var selectedAgent: AgentType? = .claude
     @State private var selectedTags: Set<String> = []
     @State private var repoPath = ""
     @State private var baseBranch = "main"
@@ -181,7 +181,7 @@ struct NewWorkspaceSheet: View {
         selectedTemplate = template.tabs.isEmpty ? nil : template
         if let agent = template.agent { selectedAgent = agent }
         if let repo = template.repoPath, !repo.isEmpty { repoPath = repo; loadBranches(for: repo) }
-        baseBranch = template.baseBranch
+        if !template.baseBranch.isEmpty { baseBranch = template.baseBranch }
         selectedTags = Set(template.tags)
         userToggledTags = !template.tags.isEmpty
         if let task = template.taskDescription { taskDescription = task }
@@ -195,11 +195,11 @@ struct NewWorkspaceSheet: View {
                 Button { selectedAgent = agent } label: { Label(agent.displayName, systemImage: agent.iconName) }
             }
             Divider()
-            Button { } label: { Label("None", systemImage: "terminal") }
+            Button { selectedAgent = nil } label: { Label("None", systemImage: "terminal") }
         } label: {
             HStack(spacing: 3) {
-                Image(systemName: selectedAgent.iconName).font(.system(size: 9))
-                Text(selectedAgent.displayName).font(.system(size: 11, weight: .medium))
+                Image(systemName: selectedAgent?.iconName ?? "terminal").font(.system(size: 9))
+                Text(selectedAgent?.displayName ?? "None").font(.system(size: 11, weight: .medium))
                 Image(systemName: "chevron.down").font(.system(size: 7))
             }
             .foregroundStyle(.primary).padding(.horizontal, 8).padding(.vertical, 4)
@@ -302,9 +302,17 @@ struct NewWorkspaceSheet: View {
 
     // MARK: - Branch Picker
 
+    private var branchValidationColor: Color? {
+        guard !baseBranch.isEmpty && !repoBranches.isEmpty else { return nil }
+        return repoBranches.contains(baseBranch) ? .green : .red
+    }
+
     private var branchPicker: some View {
         Button { showingBranchPicker = true } label: {
             HStack(spacing: 3) {
+                if let dotColor = branchValidationColor {
+                    Circle().fill(dotColor).frame(width: 5, height: 5)
+                }
                 Image(systemName: "arrow.triangle.branch").font(.system(size: 8))
                 Text(baseBranch).font(.system(size: 10))
                 Image(systemName: "chevron.up.chevron.down").font(.system(size: 7))
@@ -479,6 +487,9 @@ struct NewWorkspaceSheet: View {
 
     private func createWorkspace() {
         guard isValid else { return }
+        if !repoBranches.isEmpty && !repoBranches.contains(baseBranch) {
+            errorMessage = "Branch '\(baseBranch)' does not exist"; return
+        }
         isCreating = true; errorMessage = nil
         let name = workspaceName.isEmpty
             ? (suggestedName.isEmpty ? sanitize(String(taskDescription.prefix(30))) : suggestedName)

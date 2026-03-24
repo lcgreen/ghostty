@@ -1,5 +1,22 @@
 import Foundation
 
+/// A variable that can be substituted into template commands and paths.
+struct TemplateVariable: Codable, Identifiable, Hashable {
+    let id: UUID
+    var name: String         // e.g. "port"
+    var defaultValue: String // e.g. "3000"
+    var description: String  // e.g. "Dev server port"
+    var required: Bool
+
+    init(name: String = "", defaultValue: String = "", description: String = "", required: Bool = false) {
+        self.id = UUID()
+        self.name = name
+        self.defaultValue = defaultValue
+        self.description = description
+        self.required = required
+    }
+}
+
 /// A tab layout definition within a template.
 struct TemplateTab: Codable, Identifiable, Hashable {
     let id: UUID
@@ -121,6 +138,7 @@ struct WorkspaceTemplate: Codable, Identifiable, Hashable {
     var onDestroyCommand: String?  // Multi-line script to run in worktree before workspace is destroyed
     var category: TemplateCategory
     var tabs: [TemplateTab]    // Full tab layout with splits and commands
+    var variables: [TemplateVariable]   // Substitution variables for commands/paths
     let createdAt: Date
 
     init(
@@ -135,7 +153,8 @@ struct WorkspaceTemplate: Codable, Identifiable, Hashable {
         onCreateCommand: String? = nil,
         onDestroyCommand: String? = nil,
         category: TemplateCategory = .aiAgents,
-        tabs: [TemplateTab] = []
+        tabs: [TemplateTab] = [],
+        variables: [TemplateVariable] = []
     ) {
         self.id = UUID()
         self.name = name
@@ -150,6 +169,7 @@ struct WorkspaceTemplate: Codable, Identifiable, Hashable {
         self.onDestroyCommand = onDestroyCommand
         self.category = category
         self.tabs = tabs
+        self.variables = variables
         self.createdAt = Date()
     }
 
@@ -169,7 +189,52 @@ struct WorkspaceTemplate: Codable, Identifiable, Hashable {
         onDestroyCommand = try container.decodeIfPresent(String.self, forKey: .onDestroyCommand)
         category = try container.decodeIfPresent(TemplateCategory.self, forKey: .category) ?? .aiAgents
         tabs = try container.decodeIfPresent([TemplateTab].self, forKey: .tabs) ?? []
+        variables = try container.decodeIfPresent([TemplateVariable].self, forKey: .variables) ?? []
         createdAt = try container.decode(Date.self, forKey: .createdAt)
+    }
+
+    /// Returns a cleaned-up copy of the template with invalid data fixed.
+    func validated() -> WorkspaceTemplate {
+        var t = self
+        t.tabs = t.tabs.map { tab in
+            var tab = tab
+            // If tab has an agent, clear layout commands that are just agent titles
+            if tab.agent != nil {
+                tab.layout = tab.layout.map { Self.cleanPane($0) }
+            }
+            // Clear redundant flat splits when recursive layout exists
+            if tab.layout != nil && !tab.splits.isEmpty {
+                tab.splits = []
+            }
+            // Clean commands that look like terminal titles, not real commands
+            if let cmd = tab.command, Self.looksLikeTitle(cmd) {
+                tab.command = nil
+            }
+            return tab
+        }
+        return t
+    }
+
+    /// Check if a string looks like a terminal title rather than a command.
+    private static func looksLikeTitle(_ text: String) -> Bool {
+        if text.hasPrefix("✳") || text.hasPrefix("✦") || text.hasPrefix("●") { return true }
+        if text.unicodeScalars.contains(where: { !$0.isASCII && !CharacterSet.letters.contains($0) }) { return true }
+        return false
+    }
+
+    /// Clean a pane tree, removing fake commands from agent terminals.
+    private static func cleanPane(_ pane: TemplatePane) -> TemplatePane {
+        switch pane {
+        case .terminal(var leaf):
+            if let cmd = leaf.command, looksLikeTitle(cmd) {
+                leaf.command = nil
+            }
+            return .terminal(leaf)
+        case .split(var split):
+            split.first = cleanPane(split.first)
+            split.second = cleanPane(split.second)
+            return .split(split)
+        }
     }
 
     /// Create a template from an existing workspace (basic — no tab snapshot).
@@ -220,7 +285,7 @@ struct WorkspaceTemplate: Codable, Identifiable, Hashable {
             tags: workspace.tags,
             taskDescription: workspace.taskDescription,
             tabs: templateTabs
-        )
+        ).validated()
     }
 
     /// Recursively capture the split tree as a TemplatePane.
@@ -250,7 +315,12 @@ struct WorkspaceTemplate: Codable, Identifiable, Hashable {
     private static func extractCommand(from surface: Ghostty.SurfaceView?) -> String? {
         guard let surface, !surface.title.isEmpty else { return nil }
         let title = surface.title
+        // Filter out non-command titles
         if title.contains("@") || title.hasPrefix("/") || title.hasPrefix("~") { return nil }
+        // Filter out titles with special unicode characters (agent badges, etc.)
+        if title.unicodeScalars.contains(where: { !$0.isASCII && !CharacterSet.letters.contains($0) }) { return nil }
+        // Filter out common non-command patterns
+        if title.hasPrefix("✳") || title.hasPrefix("✦") || title.hasPrefix("●") { return nil }
         return title
     }
 
@@ -299,8 +369,11 @@ struct WorkspaceTemplate: Codable, Identifiable, Hashable {
             taskDescription: taskDescription,
             environmentVariables: environmentVariables,
             setupCommand: setupCommand,
+            onCreateCommand: onCreateCommand,
+            onDestroyCommand: onDestroyCommand,
             category: category,
-            tabs: tabs
+            tabs: tabs,
+            variables: variables
         )
     }
 
@@ -381,7 +454,8 @@ final class TemplatePersistence {
         do {
             return try decoder.decode([WorkspaceTemplate].self, from: data)
         } catch {
-            return WorkspaceTemplate.presets
+            print("[TemplatePersistence] Warning: failed to decode templates.json — returning empty array to avoid overwriting user data. Error: \(error)")
+            return []
         }
     }
 

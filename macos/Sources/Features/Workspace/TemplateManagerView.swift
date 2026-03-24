@@ -6,9 +6,9 @@ struct TemplateManagerView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var editingTemplate: WorkspaceTemplate?
-    @State private var editingLayout: WorkspaceTemplate?
-    @State private var showingLayoutEditor = false
     @State private var showingNew = false
+    @State private var templateToDelete: WorkspaceTemplate?
+    @State private var errorMessage: String?
 
     @State private var formName = ""
     @State private var formAgent: AgentType? = .claude
@@ -26,13 +26,31 @@ struct TemplateManagerView: View {
         }
         .frame(minWidth: 420, idealWidth: 500, minHeight: 400, idealHeight: 500)
         .background(Color(nsColor: .windowBackgroundColor))
-        .sheet(isPresented: $showingLayoutEditor) {
-            if let layout = editingLayout {
-                TemplateLayoutEditor(original: layout) { updated in
-                    manager.saveTemplate(updated)
-                    editingLayout = nil
-                }
+        .alert(
+            "Delete Template?",
+            isPresented: .init(
+                get: { templateToDelete != nil },
+                set: { if !$0 { templateToDelete = nil } }
+            )
+        ) {
+            Button("Delete", role: .destructive) {
+                if let t = templateToDelete { manager.removeTemplate(t) }
+                templateToDelete = nil
             }
+            Button("Cancel", role: .cancel) { templateToDelete = nil }
+        } message: {
+            if let t = templateToDelete { Text("Delete '\(t.name)'?") }
+        }
+        .alert(
+            "Error",
+            isPresented: .init(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )
+        ) {
+            Button("OK") { errorMessage = nil }
+        } message: {
+            if let msg = errorMessage { Text(msg) }
         }
     }
 
@@ -121,18 +139,27 @@ struct TemplateManagerView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(template.name).font(.system(size: 12, weight: .medium))
-                HStack(spacing: 4) {
-                    if let agent = template.agent {
-                        Text(agent.displayName).font(.system(size: 9)).foregroundStyle(.secondary)
-                    }
-                    Text(template.baseBranch)
-                        .font(.system(size: 9, design: .monospaced)).foregroundStyle(.tertiary)
-                    ForEach(template.tags, id: \.self) { tag in
-                        let def = manager.tagDefinition(for: tag)
-                        Text(tag).font(.system(size: 8, weight: .medium))
-                            .foregroundColor(def.color.opacity(0.8))
-                            .padding(.horizontal, 4).padding(.vertical, 1)
-                            .background(def.color.opacity(0.12)).clipShape(Capsule())
+                let hasSubtitle = template.agent != nil || !template.baseBranch.isEmpty || !template.tags.isEmpty || !template.tabs.isEmpty
+                if hasSubtitle {
+                    HStack(spacing: 4) {
+                        if let agent = template.agent {
+                            Text(agent.displayName).font(.system(size: 9)).foregroundStyle(.secondary)
+                        }
+                        if !template.baseBranch.isEmpty {
+                            Text(template.baseBranch)
+                                .font(.system(size: 9, design: .monospaced)).foregroundStyle(.tertiary)
+                        }
+                        if template.tabs.count > 0 && template.agent == nil && template.baseBranch.isEmpty {
+                            Text("\(template.tabs.count) tab\(template.tabs.count == 1 ? "" : "s")")
+                                .font(.system(size: 9)).foregroundStyle(.tertiary)
+                        }
+                        ForEach(template.tags, id: \.self) { tag in
+                            let def = manager.tagDefinition(for: tag)
+                            Text(tag).font(.system(size: 8, weight: .medium))
+                                .foregroundColor(def.color.opacity(0.8))
+                                .padding(.horizontal, 4).padding(.vertical, 1)
+                                .background(def.color.opacity(0.12)).clipShape(Capsule())
+                        }
                     }
                 }
             }
@@ -146,8 +173,7 @@ struct TemplateManagerView: View {
             }
 
             Button {
-                editingLayout = template
-                showingLayoutEditor = true
+                openLayoutEditor(for: template)
             } label: {
                 Image(systemName: "rectangle.split.3x1").font(.system(size: 10)).foregroundStyle(.secondary)
             }
@@ -158,7 +184,7 @@ struct TemplateManagerView: View {
             }
             .buttonStyle(.plain).help("Duplicate")
 
-            Button { manager.removeTemplate(template) } label: {
+            Button { templateToDelete = template } label: {
                 Image(systemName: "trash").font(.system(size: 10)).foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
@@ -180,9 +206,9 @@ struct TemplateManagerView: View {
 
             HStack(spacing: 8) {
                 agentMenu
-                TextField("base branch", text: $formBranch)
+                TextField("branch (optional)", text: $formBranch)
                     .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 10, design: .monospaced)).frame(width: 100)
+                    .font(.system(size: 10, design: .monospaced)).frame(width: 120)
                 categoryMenu
             }
 
@@ -274,6 +300,35 @@ struct TemplateManagerView: View {
         .padding(12)
     }
 
+    // MARK: - Layout Editor Window
+
+    private func openLayoutEditor(for template: WorkspaceTemplate) {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 580),
+            styleMask: [.titled, .closable, .resizable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Edit Layout — \(template.name)"
+        window.minSize = NSSize(width: 560, height: 480)
+        window.isReleasedWhenClosed = false
+
+        let editorView = TemplateLayoutEditor(original: template) { [weak window] updated in
+            manager.saveTemplate(updated)
+            for workspace in manager.workspaces where workspace.templateID == updated.id {
+                var propagated = workspace
+                propagated.onCreateCommand = updated.onCreateCommand
+                propagated.onDestroyCommand = updated.onDestroyCommand
+                manager.updateWorkspace(propagated)
+            }
+            window?.close()
+        }
+
+        window.contentViewController = NSHostingController(rootView: editorView)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+    }
+
     // MARK: - Actions
 
     private func beginEditing(_ template: WorkspaceTemplate) {
@@ -312,8 +367,8 @@ struct TemplateManagerView: View {
         showingNew = false
         editingTemplate = nil
         formName = ""
-        formAgent = .claude
-        formBranch = "main"
+        formAgent = nil
+        formBranch = ""
         formTags = []
         formCategory = .aiAgents
     }
@@ -338,7 +393,7 @@ struct TemplateManagerView: View {
             enc.dateEncodingStrategy = .iso8601
             try enc.encode(manager.templates).write(to: url)
         } catch {
-            print("[TemplateManagerView] Export failed: \(error)")
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -351,9 +406,26 @@ struct TemplateManagerView: View {
             let dec = JSONDecoder()
             dec.dateDecodingStrategy = .iso8601
             let imported = try dec.decode([WorkspaceTemplate].self, from: Data(contentsOf: url))
-            for template in imported { manager.saveTemplate(template) }
+            for template in imported {
+                let cleaned = template.validated()
+                // Remove existing template with same name to avoid duplicates,
+                // and update any workspaces that referenced the old template's ID.
+                if let existing = manager.templates.first(where: { $0.name == cleaned.name }) {
+                    let oldID = existing.id
+                    let newID = cleaned.id
+                    manager.removeTemplate(existing)
+                    if oldID != newID {
+                        for workspace in manager.workspaces where workspace.templateID == oldID {
+                            var updated = workspace
+                            updated.templateID = newID
+                            manager.updateWorkspace(updated)
+                        }
+                    }
+                }
+                manager.saveTemplate(cleaned)
+            }
         } catch {
-            print("[TemplateManagerView] Import failed: \(error)")
+            errorMessage = error.localizedDescription
         }
     }
 }

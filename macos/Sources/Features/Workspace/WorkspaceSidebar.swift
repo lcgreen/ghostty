@@ -24,6 +24,12 @@ struct WorkspaceSidebar: View {
     @State private var renamingWorkspace: Workspace?
     @State private var renameText = ""
     @State private var deleteError: String?
+    @State private var variablePromptTemplate: WorkspaceTemplate?
+    @State private var variablePromptWorkspace: Workspace?
+    @State private var variablePromptIsNewWorkspace = false
+    @State private var pendingNewWorkspace: Workspace?
+    @State private var confirmApplyTemplate: WorkspaceTemplate?
+    @State private var confirmApplyWorkspace: Workspace?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -102,26 +108,15 @@ struct WorkspaceSidebar: View {
             NewWorkspaceSheet(manager: manager) { workspace, template in
                 selectedWorkspaceID = workspace.id
 
-                // Copy lifecycle commands from template to workspace
                 if let template {
-                    var updated = workspace
-                    updated.onCreateCommand = template.onCreateCommand
-                    updated.onDestroyCommand = template.onDestroyCommand
-                    updated.templateID = template.id
-                    manager.updateWorkspace(updated)
-
-                    // Run onCreate command in the worktree
-                    if let cmd = template.onCreateCommand, !cmd.isEmpty {
-                        manager.runLifecycleCommand(cmd, in: workspace.worktreePath)
-                    }
-
-                    // Apply template layout
-                    if !template.tabs.isEmpty {
-                        NotificationCenter.default.post(
-                            name: Notification.Name("ghostset.applyTemplate"),
-                            object: nil,
-                            userInfo: ["template": template, "workspaceID": workspace.id]
-                        )
+                    if !template.variables.isEmpty {
+                        // Prompt user for variable values before applying
+                        pendingNewWorkspace = workspace
+                        variablePromptIsNewWorkspace = true
+                        variablePromptWorkspace = nil
+                        variablePromptTemplate = template
+                    } else {
+                        applyTemplateForNewWorkspace(template, workspace: workspace, resolvedVariables: [:])
                     }
                 }
             }
@@ -134,6 +129,33 @@ struct WorkspaceSidebar: View {
         }
         .sheet(isPresented: $showingEnvironments) {
             EnvironmentManagerView(manager: manager)
+        }
+        .sheet(
+            isPresented: .init(
+                get: { variablePromptTemplate != nil },
+                set: { if !$0 { variablePromptTemplate = nil; variablePromptWorkspace = nil; pendingNewWorkspace = nil } }
+            )
+        ) {
+            if let template = variablePromptTemplate {
+                TemplateVariablePrompt(
+                    variables: template.variables,
+                    onApply: { resolvedValues in
+                        if variablePromptIsNewWorkspace {
+                            applyTemplateForNewWorkspace(template, workspace: pendingNewWorkspace, resolvedVariables: resolvedValues)
+                        } else if let workspace = variablePromptWorkspace {
+                            applyTemplateToExisting(template, workspace: workspace, resolvedVariables: resolvedValues)
+                        }
+                        variablePromptTemplate = nil
+                        variablePromptWorkspace = nil
+                        pendingNewWorkspace = nil
+                    },
+                    onCancel: {
+                        variablePromptTemplate = nil
+                        variablePromptWorkspace = nil
+                        pendingNewWorkspace = nil
+                    }
+                )
+            }
         }
         .popover(
             isPresented: .init(
@@ -170,6 +192,35 @@ struct WorkspaceSidebar: View {
         } message: {
             if let error = deleteError {
                 Text(error)
+            }
+        }
+        .alert(
+            "Apply Template?",
+            isPresented: .init(
+                get: { confirmApplyTemplate != nil && confirmApplyWorkspace != nil },
+                set: { if !$0 { confirmApplyTemplate = nil; confirmApplyWorkspace = nil } }
+            )
+        ) {
+            Button("Apply", role: .destructive) {
+                guard let template = confirmApplyTemplate, let workspace = confirmApplyWorkspace else { return }
+                confirmApplyTemplate = nil
+                confirmApplyWorkspace = nil
+                if !template.variables.isEmpty {
+                    variablePromptIsNewWorkspace = false
+                    variablePromptWorkspace = workspace
+                    variablePromptTemplate = template
+                } else {
+                    selectedWorkspaceID = workspace.id
+                    applyTemplateToExisting(template, workspace: workspace, resolvedVariables: [:])
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                confirmApplyTemplate = nil
+                confirmApplyWorkspace = nil
+            }
+        } message: {
+            if let template = confirmApplyTemplate, let workspace = confirmApplyWorkspace {
+                Text("Apply template '\(template.name)'? This will replace all current tabs in '\(workspace.name)'.")
             }
         }
     }
@@ -508,6 +559,7 @@ struct WorkspaceSidebar: View {
             WorkspaceRow(
                 workspace: workspace,
                 tagLookup: { manager.tagDefinition(for: $0) },
+                templateLookup: { tid in manager.templates.first(where: { $0.id == tid })?.name },
                 hasUnread: manager.notifier.unreadWorkspaces.contains(workspace.id)
             )
         }
@@ -611,25 +663,8 @@ struct WorkspaceSidebar: View {
             Menu("Apply Template") {
                 ForEach(manager.templates) { template in
                     Button {
-                        selectedWorkspaceID = workspace.id
-
-                        // Copy lifecycle commands and template ID
-                        var updated = workspace
-                        updated.onCreateCommand = template.onCreateCommand
-                        updated.onDestroyCommand = template.onDestroyCommand
-                        updated.templateID = template.id
-                        manager.updateWorkspace(updated)
-
-                        // Run onCreate command
-                        if let cmd = template.onCreateCommand, !cmd.isEmpty {
-                            manager.runLifecycleCommand(cmd, in: workspace.worktreePath)
-                        }
-
-                        NotificationCenter.default.post(
-                            name: Notification.Name("ghostset.applyTemplate"),
-                            object: nil,
-                            userInfo: ["template": template, "workspaceID": workspace.id]
-                        )
+                        confirmApplyTemplate = template
+                        confirmApplyWorkspace = workspace
                     } label: {
                         Label(template.name, systemImage: template.agent?.iconName ?? "terminal")
                     }
@@ -740,6 +775,74 @@ struct WorkspaceSidebar: View {
         case "Visual Studio Code": return "com.microsoft.VSCode"
         case "Cursor": return "com.todesktop.230313mzl4w4u92"
         default: return ""
+        }
+    }
+
+    // MARK: - Template Apply Helpers
+
+    /// Apply a template to an existing workspace, with optional resolved variable values.
+    private func applyTemplateToExisting(_ template: WorkspaceTemplate, workspace: Workspace, resolvedVariables: [String: String]) {
+        selectedWorkspaceID = workspace.id
+
+        let resolvedCreate = resolvedVariables.isEmpty
+            ? template.onCreateCommand
+            : template.onCreateCommand.map { TemplateVariableSubstitution.substitute($0, variables: resolvedVariables) }
+        let resolvedDestroy = resolvedVariables.isEmpty
+            ? template.onDestroyCommand
+            : template.onDestroyCommand.map { TemplateVariableSubstitution.substitute($0, variables: resolvedVariables) }
+
+        var updated = workspace
+        updated.onCreateCommand = resolvedCreate
+        updated.onDestroyCommand = resolvedDestroy
+        updated.templateID = template.id
+        manager.updateWorkspace(updated)
+
+        if let cmd = resolvedCreate, !cmd.isEmpty {
+            manager.runLifecycleCommand(cmd, in: workspace.worktreePath)
+        }
+
+        NotificationCenter.default.post(
+            name: Notification.Name("ghostset.applyTemplate"),
+            object: nil,
+            userInfo: [
+                "template": template,
+                "workspaceID": workspace.id,
+                "resolvedVariables": resolvedVariables
+            ] as [String: Any]
+        )
+    }
+
+    /// Apply a template to a newly created workspace, with optional resolved variable values.
+    private func applyTemplateForNewWorkspace(_ template: WorkspaceTemplate, workspace: Workspace?, resolvedVariables: [String: String]) {
+        guard let workspace else { return }
+
+        let resolvedCreate = resolvedVariables.isEmpty
+            ? template.onCreateCommand
+            : template.onCreateCommand.map { TemplateVariableSubstitution.substitute($0, variables: resolvedVariables) }
+        let resolvedDestroy = resolvedVariables.isEmpty
+            ? template.onDestroyCommand
+            : template.onDestroyCommand.map { TemplateVariableSubstitution.substitute($0, variables: resolvedVariables) }
+
+        var updated = workspace
+        updated.onCreateCommand = resolvedCreate
+        updated.onDestroyCommand = resolvedDestroy
+        updated.templateID = template.id
+        manager.updateWorkspace(updated)
+
+        if let cmd = resolvedCreate, !cmd.isEmpty {
+            manager.runLifecycleCommand(cmd, in: workspace.worktreePath)
+        }
+
+        if !template.tabs.isEmpty {
+            NotificationCenter.default.post(
+                name: Notification.Name("ghostset.applyTemplate"),
+                object: nil,
+                userInfo: [
+                    "template": template,
+                    "workspaceID": workspace.id,
+                    "resolvedVariables": resolvedVariables
+                ] as [String: Any]
+            )
         }
     }
 }

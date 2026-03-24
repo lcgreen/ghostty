@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xcodebuild -project macos/Ghostty.xcodeproj -scheme Ghostty build)",
+      "Bash(open:*)",
+      "Bash(pkill -f \"Ghostty.app\")",
+      "Bash(python3 -c \"import json,sys; data=json.load\\(sys.stdin\\); [print\\(f''''Tab: {t[title]}, cmd: {t.get\\(command\\)}, autoRun: {t.get\\(autoRun\\)}''''\\) for tmpl in data for t in tmpl.get\\(''''tabs'''',[]\\)]\")",
+      "Bash(python3 -c \"import json,sys; data=json.load\\(sys.stdin\\); [print\\(f''''{w[name]}: templateID={w.get\\(templateID, MISSING\\)}''''\\) for w in data.get\\(''''workspaces'''',[]\\)]\")",
+      "Bash(python3 -c \"import json,sys; data=json.load\\(sys.stdin\\); [print\\(f''''{t[name]}: id={t[id]}''''\\) for t in data]\")",
+      "Bash(git status:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}

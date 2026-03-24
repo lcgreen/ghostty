@@ -4,6 +4,7 @@ import SwiftUI
 struct WorkspaceRow: View {
     let workspace: Workspace
     let tagLookup: (String) -> TagDefinition
+    var templateLookup: ((UUID) -> String?)? = nil
     var hasUnread: Bool = false
 
     @State private var changeStats: WorkspaceChangeStats = .zero
@@ -92,13 +93,22 @@ struct WorkspaceRow: View {
                         .lineLimit(1)
                 }
 
-                // Branch + last activity
+                // Branch + template + last activity
                 HStack(spacing: 6) {
                     if abbreviatedBranch != workspace.name {
                         Text(abbreviatedBranch)
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                    }
+
+                    if let tName = templateName {
+                        Text(tName)
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.08))
+                            .clipShape(Capsule())
                     }
 
                     if let time = lastCommitTime {
@@ -311,6 +321,11 @@ struct WorkspaceRow: View {
             }
         }
         .frame(width: 14)
+    }
+
+    private var templateName: String? {
+        guard let tid = workspace.templateID else { return nil }
+        return templateLookup?(tid)
     }
 
     private var abbreviatedBranch: String {

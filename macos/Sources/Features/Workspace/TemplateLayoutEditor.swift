@@ -9,6 +9,7 @@ struct TemplateLayoutEditor: View {
     @State private var template: WorkspaceTemplate
     @State private var selectedTabID: UUID?
     @State private var showingCommands = false
+    @State private var showingVariables = false
 
     init(original: WorkspaceTemplate, onSave: @escaping (WorkspaceTemplate) -> Void) {
         self.original = original
@@ -94,6 +95,11 @@ struct TemplateLayoutEditor: View {
 
             // Lifecycle commands
             commandsSection
+
+            Divider()
+
+            // Variables
+            variablesSection
 
             Divider()
 
@@ -258,7 +264,7 @@ struct TemplateLayoutEditor: View {
                             }
                             Button("Add Split") {
                                 template.tabs[idx].splits.append(
-                                    TemplateSplit(command: "", autoRun: true)
+                                    TemplateSplit(command: nil, autoRun: false)
                                 )
                             }
                             .font(.system(size: 10))
@@ -284,7 +290,7 @@ struct TemplateLayoutEditor: View {
                 template.tabs[tabIndex].splits[splitIndex].direction =
                     split.direction == .horizontal ? .vertical : .horizontal
             } label: {
-                Image(systemName: split.direction == .horizontal ? "rectangle.split.1x2" : "rectangle.split.2x1")
+                Image(systemName: split.direction == .horizontal ? "rectangle.split.2x1" : "rectangle.split.1x2")
                     .font(.system(size: 10))
                     .frame(width: 18, height: 18)
             }
@@ -371,6 +377,83 @@ struct TemplateLayoutEditor: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+    }
+
+    // MARK: - Variables
+
+    private var variablesSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button { showingVariables.toggle() } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: showingVariables ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 7))
+                    Text("Variables")
+                        .font(.system(size: 9, weight: .medium))
+                        .textCase(.uppercase)
+                    if !template.variables.isEmpty {
+                        Text("\(template.variables.count)")
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+
+            if showingVariables {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(template.variables.enumerated()), id: \.element.id) { idx, variable in
+                        variableRow(index: idx, variable: variable)
+                    }
+                    Button("Add Variable") {
+                        template.variables.append(TemplateVariable())
+                    }
+                    .font(.system(size: 10))
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
+    private func variableRow(index: Int, variable: TemplateVariable) -> some View {
+        HStack(spacing: 6) {
+            TextField("name", text: $template.variables[index].name)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 10, design: .monospaced))
+                .frame(width: 90)
+                .help("Variable name (used as {{name}} in commands)")
+
+            TextField("default", text: $template.variables[index].defaultValue)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 10, design: .monospaced))
+                .frame(width: 80)
+                .help("Default value")
+
+            TextField("description", text: $template.variables[index].description)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 10))
+                .help("Short description shown to the user")
+
+            Toggle("req", isOn: $template.variables[index].required)
+                .toggleStyle(.checkbox)
+                .font(.system(size: 9))
+                .help("Required — user must provide a value")
+
+            Button {
+                template.variables.remove(at: index)
+            } label: {
+                Image(systemName: "xmark").font(.system(size: 8))
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(4)
+        .background(Color.primary.opacity(0.02))
+        .cornerRadius(4)
     }
 
     // MARK: - Actions

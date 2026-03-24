@@ -51,6 +51,7 @@ struct WorkspaceWindow: View {
                     guard let info = notification.userInfo,
                           let template = info["template"] as? WorkspaceTemplate,
                           let wsID = info["workspaceID"] as? UUID else { return }
+                    let resolvedVariables = info["resolvedVariables"] as? [String: String] ?? [:]
                     // Delay to let the workspace creation finish
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         guard wsID == selectedWorkspaceID,
@@ -59,7 +60,7 @@ struct WorkspaceWindow: View {
                         let config: Ghostty.SurfaceConfiguration? = workspace.map {
                             WorkspaceWindowController.surfaceConfiguration(for: $0)
                         }
-                        vmCache.applyTemplate(template, for: workspace, app: app, baseConfig: config)
+                        vmCache.applyTemplate(template, for: workspace, app: app, baseConfig: config, resolvedVariables: resolvedVariables)
                         bindActiveViewModel()
                         // Save immediately so the layout persists across restarts
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {

@@ -262,10 +262,16 @@ final class WorkspaceViewModelCache: ObservableObject {
         _ template: WorkspaceTemplate,
         for workspace: Workspace?,
         app: ghostty_app_t,
-        baseConfig: Ghostty.SurfaceConfiguration? = nil
+        baseConfig: Ghostty.SurfaceConfiguration? = nil,
+        resolvedVariables: [String: String] = [:]
     ) {
         guard !template.tabs.isEmpty else { return }
         guard let workspace else { return }
+
+        // Substitute variables into all template text fields before building tabs
+        let template = resolvedVariables.isEmpty
+            ? template
+            : TemplateVariableSubstitution.substituteTemplate(template, values: resolvedVariables)
 
         let group = tabGroup(for: workspace, app: app, baseConfig: baseConfig)
 
