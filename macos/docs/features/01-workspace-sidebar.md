@@ -65,13 +65,14 @@
 - **Sort menu button**: SF Symbol `arrow.up.arrow.down`, size 10; `.menuStyle(.borderlessButton)`; foreground is `.primary` when non-manual sort, `.secondary` when manual; contains one `Button` per `WorkspaceSortOrder.allCases` with checkmark indicator
 - **Git panel toggle button**: SF Symbol `arrow.triangle.branch`, size 10; toggles `showingGitPanel`; help text "Toggle git changes"
 - **Add menu**: SF Symbol `plus`, size 11, `.foregroundStyle(.secondary)`, `.menuStyle(.borderlessButton)`:
-  - "New Workspace" (icon: `plus.rectangle.on.rectangle`) -- presents `NewWorkspaceSheet`
+  - "New Workspace" (icon: `plus.rectangle.on.rectangle`) — presents `NewWorkspaceSheet`
+  - "Open Project" (icon: `folder`) — opens folder picker to register existing git repo
   - Divider
-  - "New Tag" (icon: `tag`) -- opens new tag popover
-  - "Manage Templates" (icon: `doc.on.doc`) -- presents `TemplateManagerView`
-  - "Environments" (icon: `server.rack`) -- presents `EnvironmentManagerView`
+  - "New Tag" (icon: `tag`) — opens new tag popover
+  - "Manage Templates" (icon: `doc.on.doc`) — presents `TemplateManagerView`
+  - "Environments" (icon: `server.rack`) — presents `EnvironmentManagerView`
   - Divider
-  - "Compare All Workspaces" (icon: `square.split.2x1`) -- presents `WorkspaceDiffView`
+  - "Compare All Workspaces" (icon: `square.split.2x1`) — presents `WorkspaceDiffView`
 
 #### Search Bar (conditional, shown when `showingSearch` is true)
 - **Search icon**: SF Symbol `magnifyingglass`, size 10, `.foregroundStyle(.tertiary)`
@@ -122,23 +123,21 @@
 - Commit calls `workspace.renamed(to:)` then `manager.updateWorkspace()`
 
 #### Context Menu (right-click on workspace row)
-1. **"Open in Finder"** -- calls `NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath:)`
-2. Divider
-3. **"Pin to Top" / "Unpin"** -- calls `manager.updateWorkspace(workspace.toggledPin())`
-4. **"Archive" / "Unarchive"** -- calls `manager.updateWorkspace(workspace.toggledArchive())`
-5. Divider
-6. **"Tags" submenu**:
-   - One button per `manager.tagDefinitions` showing colored circle (8x8) + name + checkmark if applied
-   - Divider
-   - "Manage Tags..." -- opens new tag popover
-7. Divider
-8. **"Settings..."** -- sets `settingsWorkspace` to show `WorkspaceSettingsPopover`
-9. **"Save as Template"** -- calls `manager.saveAsTemplate(workspace)`
-10. **"Open in VS Code"** -- launches VS Code via `NSWorkspace.shared.open` with bundle ID `com.microsoft.VSCode`
-11. **"Open in Cursor"** -- launches Cursor via bundle ID `com.todesktop.230313mzl4w4u92`
-12. Divider
-13. **"Remove from Workspace"** -- soft remove (keeps files), shows confirmation alert
-14. **"Delete Worktree"** (role: `.destructive`) -- hard delete, shows confirmation alert
+1. **"Open in Finder"** — opens worktree path in Finder
+2. **"Rename..."** — enters inline rename mode
+3. Divider
+4. **"Pin to Top" / "Unpin"** — toggles pin state
+5. **"Archive" / "Unarchive"** — toggles archive state
+6. Divider
+7. **"Tags" submenu** — tag toggles with colored circles + "Manage Tags..."
+8. Divider
+9. **"Settings..."** — opens `WorkspaceSettingsPopover`
+10. **"Save as Template"** — captures workspace layout as reusable template
+11. **"Apply Template" submenu** — lists all templates; shows confirmation alert, prompts for variables if defined, applies layout with auto-run commands
+12. **"Open in VS Code"** / **"Open in Cursor"** — launches editor at worktree path (graceful nil handling)
+13. Divider
+14. **"Remove from Workspace"** — soft remove (keeps files), shows confirmation alert
+15. **"Delete Worktree"** (destructive) — hard delete with confirmation, shows "Deleting..." status, error feedback on failure
 
 #### Delete Confirmation Alert
 - Title: "Delete Worktree?" (hard delete) or "Remove Workspace?" (soft remove)
@@ -350,46 +349,45 @@
 
 ## Known Issues
 
-1. **`multiSelection` is declared but unused.** `@State private var multiSelection: Set<UUID> = []` is never read or written anywhere in the view. This is dead code, likely from a planned but unfinished multi-select feature.
+1. **Git panel is global, not per-workspace.** `showingGitPanel` is sidebar-wide. Panel stays open when switching workspaces — content updates but this may be confusing.
+2. **Cursor bundle ID is fragile.** `com.todesktop.230313mzl4w4u92` is a ToDesktop-generated ID that may change between Cursor releases. Noted in code with a comment.
+3. **`changeCount` sort is approximate.** Change stats are loaded async per-row and not available to the sidebar sort logic. Falls back to name comparison.
 
-2. **`toggleTag` mutates a copy incorrectly.** Lines 599-607: The function gets a workspace by index, creates `var updated = manager.workspaces[idx]`, mutates `updated.tags` in place, then passes it to `manager.updateWorkspace()`. While this works, it violates the immutability pattern established elsewhere (e.g., `renamed(to:)`, `toggledPin()`, `toggledArchive()`). Tags should have an equivalent immutable toggle method on `Workspace`.
+## Resolved Issues (previously known)
 
-3. **`changeCount` sort does not sort by change count.** In `filteredWorkspaces` sorting (line 167), the `.changeCount` case falls back to name comparison instead of actually comparing change counts. The `WorkspaceChangeStats` are loaded asynchronously in `WorkspaceRow` and not available to the sidebar's sort logic.
-
-4. **Force-unwrap in tag filtering.** Line 142: `ws.tags.contains(selectedTag!)` force-unwraps `selectedTag`. While guarded by `selectedTag == nil` check on the same line, the force-unwrap is unnecessary and could be replaced with `if let` or `flatMap`.
-
-5. **Search reset only partial.** When toggling search off (line 193-196), `searchText` and `workspaceFilter` are reset, but `selectedTag` is not reset to `nil`. A user who filtered by tag, then closed search, would retain the invisible tag filter.
-
-6. **`openInEditor` uses deprecated API pattern.** The `NSWorkspace.shared.open([url], withApplicationAt:configuration:)` call does not handle the case where `urlForApplication(withBundleIdentifier:)` returns nil gracefully -- it falls back to a hardcoded `/Applications/` path that may not exist.
-
-7. **`bundleID` for Cursor is fragile.** The bundle ID `com.todesktop.230313mzl4w4u92` appears to be a todesktop-generated ID that may change between Cursor versions.
-
-8. **Git panel does not track per-workspace.** The `showingGitPanel` boolean is global to the sidebar, but `GitStatusPanel` only shows data for the currently selected workspace. If the user toggles git panel on, switches workspaces, the panel stays open but content changes -- this is likely intentional but could be confusing.
-
-9. **Delete alert uses Task without error handling.** Line 585: `try? await manager.deleteWorkspace(ws)` silently swallows errors. If worktree deletion fails (e.g., dirty worktree, permission denied), the user receives no feedback.
+| Issue | Resolution |
+|-------|-----------|
+| `multiSelection` dead code | Removed |
+| `toggleTag` mutates copy incorrectly | Cleaned up, uses immutable pattern |
+| Force-unwrap in tag filtering | Replaced with safe optional chaining |
+| Search reset doesn't clear `selectedTag` | Fixed — `selectedTag = nil` on search dismiss |
+| `openInEditor` hardcoded fallback path | Fixed — graceful nil handling with `Ghostty.logger` warning |
+| Delete alert swallows errors | Fixed — `do/catch` with `deleteError` alert |
 
 ## Future Enhancements
 
-1. **Multi-select operations.** The `multiSelection` state exists but is unused. Implement bulk archive, bulk tag, bulk delete for selected workspaces.
+1. **Multi-select operations.** Bulk archive, bulk tag, bulk delete for selected workspaces.
+2. **True change-count sorting.** Propagate `WorkspaceChangeStats` up from `WorkspaceRow` to sidebar sort.
+3. **Tag management improvements.** Rename tags, delete tags, hierarchical tags (`parentTag` exists but unused).
+4. **Keyboard shortcuts.** Arrow keys between workspaces, Cmd+F for search, Cmd+N for new workspace.
+5. **Drag-and-drop to tag.** Drag workspaces onto tag pills to assign tags.
+6. **Persist sidebar state.** Save `sortOrder`, `showingGitPanel`, `selectedTag` to UserDefaults.
+7. **External editor configurability.** User-configurable editor list instead of hardcoded VS Code + Cursor.
 
-2. **True change-count sorting.** Propagate `WorkspaceChangeStats` up from `WorkspaceRow` to enable sorting by actual git change counts.
+## Recently Added (2026-03-24)
 
-3. **Tag management improvements.** Add ability to rename tags, delete tags, assign icons from the tag bar (not just via context menu), and support hierarchical tags (the `parentTag` field exists but is unused in the sidebar).
-
-4. **Keyboard shortcuts.** Add keyboard navigation: arrow keys to move between workspaces, Cmd+F to toggle search, Cmd+N for new workspace, Delete to remove.
-
-5. **Drag-and-drop to tag.** Allow dragging workspaces onto tag pills to assign tags.
-
-6. **Persist sidebar state.** Save `sortOrder`, `showingGitPanel`, `selectedTag`, and `workspaceFilter` to UserDefaults so they survive app restarts.
-
-7. **Search improvements.** Add recent searches, search by status, search by agent type.
-
-8. **External editor configurability.** Replace hardcoded VS Code and Cursor options with user-configurable editor list.
-
-9. **Error feedback for delete.** Replace `try?` with proper error handling and present an alert on failure.
-
-10. **Immutable tag toggle.** Add a `togglingTag(_:)` method on `Workspace` to match the pattern of `toggledPin()` and `toggledArchive()`.
+| Feature | Implementation |
+|---------|----------------|
+| **Apply Template** context menu | Right-click → Apply Template with confirmation alert; prompts for variables if defined |
+| **Open Project** | "+" menu → Open Project opens folder picker to register existing git repo |
+| **Template indicator** | Workspace row shows assigned template name as capsule pill |
+| **Deleting status** | Orange `.deleting` status during async worktree deletion |
+| **Variable prompt** | `TemplateVariablePrompt` sheet shown when applying template with variables |
+| **Lifecycle commands** | `onCreateCommand` runs on apply, `onDestroyCommand` runs before delete |
+| **Branch validation** | Validates branch exists before worktree creation; visual indicator in NewWorkspaceSheet |
 
 ## Changelog
 
-- 2026-03-20: Initial spec created from `WorkspaceSidebar.swift` (639 lines), `WorkspaceRow.swift` (164 lines), `WorkspaceModel.swift` (284 lines), `TagDefinition.swift` (163 lines), `GitStatusPanel.swift` (405 lines), `WorkspaceHelpers.swift` (132 lines), `WorkspaceNotifier.swift` (246 lines)
+- 2026-03-20: Initial spec
+- 2026-03-24: Fixed: openInEditor nil handling, delete error feedback, search reset, force-unwrap
+- 2026-03-24: Added: Apply Template with confirmation, Open Project, template indicator, deleting status, variable prompt, lifecycle commands, branch validation

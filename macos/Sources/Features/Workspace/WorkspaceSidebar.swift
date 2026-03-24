@@ -14,13 +14,26 @@ struct WorkspaceSidebar: View {
     @State private var showingNewTag = false
     @State private var newTagName = ""
     @State private var newTagColor = "blue"
-    @State private var showingGitPanel = false
+    @State private var editingTagName: String? = nil
+    @State private var editingTagRename: String = ""
+    @State private var editingTagColor: String = "blue"
+    @AppStorage("ghostset.sidebar.showingGitPanel") private var showingGitPanel = false
+    @State private var changeStatsCache: [UUID: WorkspaceChangeStats] = [:]
     @State private var showingDiffView = false
     @State private var showingTemplates = false
     @State private var showingEnvironments = false
     @State private var settingsWorkspace: Workspace?
-    @State private var sortOrder: WorkspaceSortOrder = .manual
-    @State private var workspaceFilter: WorkspaceFilter = .active
+    @AppStorage("ghostset.sidebar.sortOrder") private var sortOrderRaw: String = WorkspaceSortOrder.manual.rawValue
+    @AppStorage("ghostset.sidebar.workspaceFilter") private var workspaceFilterRaw: String = WorkspaceFilter.active.rawValue
+
+    private var sortOrder: WorkspaceSortOrder {
+        WorkspaceSortOrder(rawValue: sortOrderRaw) ?? .manual
+    }
+
+    private var workspaceFilter: WorkspaceFilter {
+        WorkspaceFilter(rawValue: workspaceFilterRaw) ?? .active
+    }
+
     @State private var renamingWorkspace: Workspace?
     @State private var renameText = ""
     @State private var deleteError: String?
@@ -37,7 +50,10 @@ struct WorkspaceSidebar: View {
             if showingSearch {
                 searchBar
                 tagBar
-                Picker("Filter", selection: $workspaceFilter) {
+                Picker("Filter", selection: Binding(
+                    get: { WorkspaceFilter(rawValue: workspaceFilterRaw) ?? .active },
+                    set: { workspaceFilterRaw = $0.rawValue }
+                )) {
                     ForEach(WorkspaceFilter.allCases, id: \.self) { filter in
                         Text(filter.rawValue).tag(filter)
                     }
@@ -60,6 +76,7 @@ struct WorkspaceSidebar: View {
             if let id = newID {
                 manager.notifier.markRead(workspaceID: id)
             }
+            showingGitPanel = false
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             manager.refreshStats()
@@ -89,18 +106,18 @@ struct WorkspaceSidebar: View {
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ghostset.sortWorkspaces"))) { notification in
             if let sort = notification.userInfo?["sort"] as? String {
                 switch sort {
-                case "name": sortOrder = .name
-                case "dateCreated": sortOrder = .dateCreated
-                default: sortOrder = .manual
+                case "name": sortOrderRaw = WorkspaceSortOrder.name.rawValue
+                case "dateCreated": sortOrderRaw = WorkspaceSortOrder.dateCreated.rawValue
+                default: sortOrderRaw = WorkspaceSortOrder.manual.rawValue
                 }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ghostset.filterWorkspaces"))) { notification in
             if let filter = notification.userInfo?["filter"] as? String {
                 switch filter {
-                case "active": workspaceFilter = .active
-                case "archived": workspaceFilter = .archived
-                default: workspaceFilter = .all
+                case "active": workspaceFilterRaw = WorkspaceFilter.active.rawValue
+                case "archived": workspaceFilterRaw = WorkspaceFilter.archived.rawValue
+                default: workspaceFilterRaw = WorkspaceFilter.all.rawValue
                 }
             }
         }
@@ -259,7 +276,9 @@ struct WorkspaceSidebar: View {
             case .status:
                 return lhs.status.displayLabel < rhs.status.displayLabel
             case .changeCount:
-                // TODO: Sort by actual change count once stats are propagated from WorkspaceRow
+                let lhsCount = changeStatsCache[lhs.id]?.filesChanged ?? 0
+                let rhsCount = changeStatsCache[rhs.id]?.filesChanged ?? 0
+                if lhsCount != rhsCount { return lhsCount > rhsCount }
                 return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
             }
         }
@@ -289,7 +308,7 @@ struct WorkspaceSidebar: View {
                     if !showingSearch {
                         searchText = ""
                         selectedTag = nil
-                        workspaceFilter = .active
+                        workspaceFilterRaw = WorkspaceFilter.active.rawValue
                     }
                 }
             } label: {
@@ -322,7 +341,7 @@ struct WorkspaceSidebar: View {
         Menu {
             ForEach(WorkspaceSortOrder.allCases, id: \.rawValue) { order in
                 Button {
-                    sortOrder = order
+                    sortOrderRaw = order.rawValue
                 } label: {
                     HStack {
                         Text(order.rawValue)
@@ -484,47 +503,187 @@ struct WorkspaceSidebar: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - New Tag Popover
+    // MARK: - Tag Management Popover
 
     private var newTagPopover: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("New Tag")
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Manage Tags")
                 .font(.system(size: 12, weight: .semibold))
 
-            TextField("Tag name", text: $newTagName)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 12))
-
-            LazyVGrid(columns: Array(repeating: GridItem(.fixed(24), spacing: 6), count: 5), spacing: 6) {
-                ForEach(TagDefinition.availableColors, id: \.name) { colorOption in
-                    colorSwatch(colorOption.name, isChosen: newTagColor == colorOption.name)
+            if !manager.tagDefinitions.isEmpty {
+                VStack(spacing: 2) {
+                    ForEach(manager.tagDefinitions) { def in
+                        tagManagementRow(def)
+                    }
                 }
+                Divider()
             }
 
-            HStack {
-                Spacer()
-                Button("Cancel") {
-                    showingNewTag = false
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("New Tag")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
 
-                Button("Add") {
-                    let trimmed = newTagName
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                        .lowercased()
-                        .replacingOccurrences(of: " ", with: "-")
-                    guard !trimmed.isEmpty else { return }
-                    manager.upsertTagDefinition(TagDefinition(name: trimmed, colorName: newTagColor))
-                    showingNewTag = false
+                TextField("Tag name", text: $newTagName)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12))
+
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(22), spacing: 5), count: 5), spacing: 5) {
+                    ForEach(TagDefinition.availableColors, id: \.name) { colorOption in
+                        colorSwatch(colorOption.name, isChosen: newTagColor == colorOption.name)
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .disabled(newTagName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                HStack {
+                    Spacer()
+                    Button("Done") {
+                        showingNewTag = false
+                        editingTagName = nil
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11))
+
+                    Button("Add") {
+                        let trimmed = newTagName
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                            .lowercased()
+                            .replacingOccurrences(of: " ", with: "-")
+                        guard !trimmed.isEmpty else { return }
+                        manager.upsertTagDefinition(TagDefinition(name: trimmed, colorName: newTagColor))
+                        newTagName = ""
+                        newTagColor = "blue"
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(newTagName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
             }
         }
         .padding(12)
-        .frame(width: 180)
+        .frame(width: 220)
+    }
+
+    @ViewBuilder
+    private func tagManagementRow(_ def: TagDefinition) -> some View {
+        if editingTagName == def.name {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(TagDefinition.swiftUIColor(for: editingTagColor))
+                        .frame(width: 8, height: 8)
+                    TextField("Tag name", text: $editingTagRename, onCommit: {
+                        commitTagRename(original: def)
+                    })
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 11))
+                }
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(18), spacing: 4), count: 5), spacing: 4) {
+                    ForEach(TagDefinition.availableColors, id: \.name) { colorOption in
+                        Circle()
+                            .fill(TagDefinition.swiftUIColor(for: colorOption.name))
+                            .frame(width: 14, height: 14)
+                            .overlay(
+                                Circle().strokeBorder(
+                                    Color.white,
+                                    lineWidth: editingTagColor == colorOption.name ? 2 : 0
+                                )
+                            )
+                            .shadow(
+                                color: editingTagColor == colorOption.name
+                                    ? TagDefinition.swiftUIColor(for: colorOption.name).opacity(0.5)
+                                    : .clear,
+                                radius: 2
+                            )
+                            .onTapGesture { editingTagColor = colorOption.name }
+                    }
+                }
+                HStack {
+                    Button("Cancel") { editingTagName = nil }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .font(.system(size: 10))
+                    Spacer()
+                    Button("Save") { commitTagRename(original: def) }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.mini)
+                        .disabled(editingTagRename.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .padding(6)
+            .background(Color.primary.opacity(0.04))
+            .cornerRadius(6)
+        } else {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(def.color)
+                    .frame(width: 8, height: 8)
+                Text(def.name)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.primary)
+                Spacer()
+                Button {
+                    editingTagName = def.name
+                    editingTagRename = def.name
+                    editingTagColor = def.colorName
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Rename tag")
+
+                Button {
+                    manager.removeTagDefinition(def.name)
+                    if selectedTag == def.name { selectedTag = nil }
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Delete tag")
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 3)
+        }
+    }
+
+    private func commitTagRename(original: TagDefinition) {
+        let trimmed = editingTagRename
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "-")
+        guard !trimmed.isEmpty else {
+            editingTagName = nil
+            return
+        }
+        let newDef = TagDefinition(
+            name: trimmed,
+            colorName: editingTagColor,
+            iconName: original.iconName,
+            parentTag: original.parentTag
+        )
+        if trimmed != original.name {
+            let affectedIDs = Set(manager.workspaces
+                .filter { $0.tags.contains(original.name) }
+                .map { $0.id })
+            manager.removeTagDefinition(original.name)
+            if selectedTag == original.name { selectedTag = trimmed }
+            manager.upsertTagDefinition(newDef)
+            for ws in manager.workspaces where affectedIDs.contains(ws.id) {
+                var updated = ws
+                if !updated.tags.contains(trimmed) {
+                    updated.tags.append(trimmed)
+                    updated.tags.sort()
+                }
+                manager.updateWorkspace(updated)
+            }
+        } else {
+            manager.upsertTagDefinition(newDef)
+        }
+        editingTagName = nil
     }
 
     // MARK: - Workspace List
@@ -560,7 +719,10 @@ struct WorkspaceSidebar: View {
                 workspace: workspace,
                 tagLookup: { manager.tagDefinition(for: $0) },
                 templateLookup: { tid in manager.templates.first(where: { $0.id == tid })?.name },
-                hasUnread: manager.notifier.unreadWorkspaces.contains(workspace.id)
+                hasUnread: manager.notifier.unreadWorkspaces.contains(workspace.id),
+                onStatsLoaded: { stats in
+                    changeStatsCache[workspace.id] = stats
+                }
             )
         }
     }
@@ -644,7 +806,26 @@ struct WorkspaceSidebar: View {
             Button("Manage Tags...") {
                 newTagName = ""
                 newTagColor = "blue"
+                editingTagName = nil
                 showingNewTag = true
+            }
+
+            if !manager.tagDefinitions.isEmpty {
+                Menu("Delete Tag") {
+                    ForEach(manager.tagDefinitions) { def in
+                        Button(role: .destructive) {
+                            manager.removeTagDefinition(def.name)
+                            if selectedTag == def.name { selectedTag = nil }
+                        } label: {
+                            HStack {
+                                Circle()
+                                    .fill(def.color)
+                                    .frame(width: 8, height: 8)
+                                Text(def.name)
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -672,11 +853,10 @@ struct WorkspaceSidebar: View {
             }
         }
 
-        Button("Open in VS Code") {
-            openInEditor("Visual Studio Code", path: workspace.worktreePath)
-        }
-        Button("Open in Cursor") {
-            openInEditor("Cursor", path: workspace.worktreePath)
+        ForEach(manager.externalEditors) { editor in
+            Button("Open in \(editor.name)") {
+                openInEditor(editor, path: workspace.worktreePath)
+            }
         }
 
         Divider()
@@ -759,23 +939,32 @@ struct WorkspaceSidebar: View {
         }
     }
 
-    private func openInEditor(_ appName: String, path: String) {
+    private func openInEditor(_ editor: ExternalEditor, path: String) {
         let url = URL(fileURLWithPath: path)
-        NSWorkspace.shared.open(
-            [url],
-            withApplicationAt: NSWorkspace.shared.urlForApplication(
-                withBundleIdentifier: bundleID(for: appName)
-            ) ?? URL(fileURLWithPath: "/Applications/\(appName).app"),
-            configuration: NSWorkspace.OpenConfiguration()
-        )
+        if let appURL = resolveAppURL(for: editor) {
+            NSWorkspace.shared.open(
+                [url],
+                withApplicationAt: appURL,
+                configuration: NSWorkspace.OpenConfiguration()
+            )
+        } else {
+            Ghostty.logger.warning("Could not find application '\(editor.name)'; opening path directly")
+            NSWorkspace.shared.open(url)
+        }
     }
 
-    private func bundleID(for appName: String) -> String {
-        switch appName {
-        case "Visual Studio Code": return "com.microsoft.VSCode"
-        case "Cursor": return "com.todesktop.230313mzl4w4u92"
-        default: return ""
+    /// Resolve an app URL by trying the editor's bundle IDs in order, then its fallback path.
+    private func resolveAppURL(for editor: ExternalEditor) -> URL? {
+        for bundleID in editor.bundleIdentifiers {
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                return url
+            }
         }
+        if let fallback = editor.fallbackPath,
+           FileManager.default.fileExists(atPath: fallback) {
+            return URL(fileURLWithPath: fallback)
+        }
+        return nil
     }
 
     // MARK: - Template Apply Helpers

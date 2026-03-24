@@ -6,6 +6,7 @@ struct WorkspaceRow: View {
     let tagLookup: (String) -> TagDefinition
     var templateLookup: ((UUID) -> String?)? = nil
     var hasUnread: Bool = false
+    var onStatsLoaded: ((WorkspaceChangeStats) -> Void)? = nil
 
     @State private var changeStats: WorkspaceChangeStats = .zero
     @State private var isAnimatingStatus = false
@@ -411,7 +412,9 @@ struct WorkspaceRow: View {
         // Change stats
         if let output = await GitShell.asyncOutput(["git", "-C", path, "diff", "--shortstat"]) {
             guard !Task.isCancelled else { return }
-            changeStats = GitShell.parseShortstat(output)
+            let stats = GitShell.parseShortstat(output)
+            changeStats = stats
+            onStatsLoaded?(stats)
         }
 
         // Last commit time

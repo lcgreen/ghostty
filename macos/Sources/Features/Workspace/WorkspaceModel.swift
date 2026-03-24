@@ -271,6 +271,38 @@ struct WorkspaceChangeStats: Equatable {
     }
 }
 
+// MARK: - External Editor
+
+/// A configurable external editor that can be launched from the workspace context menu.
+struct ExternalEditor: Codable, Identifiable, Hashable {
+    let id: UUID
+    var name: String
+    /// Bundle IDs to try in order; first match wins.
+    var bundleIdentifiers: [String]
+    /// Absolute app path used if no bundle ID resolves.
+    var fallbackPath: String?
+
+    init(name: String, bundleIdentifiers: [String], fallbackPath: String? = nil) {
+        self.id = UUID()
+        self.name = name
+        self.bundleIdentifiers = bundleIdentifiers
+        self.fallbackPath = fallbackPath
+    }
+
+    static let defaults: [ExternalEditor] = [
+        ExternalEditor(
+            name: "VS Code",
+            bundleIdentifiers: ["com.microsoft.VSCode"],
+            fallbackPath: "/Applications/Visual Studio Code.app"
+        ),
+        ExternalEditor(
+            name: "Cursor",
+            bundleIdentifiers: ["com.todesktop.230313mzl4w4u92", "com.cursor.Cursor"],
+            fallbackPath: "/Applications/Cursor.app"
+        ),
+    ]
+}
+
 // MARK: - Workspace Sorting
 
 enum WorkspaceSortOrder: String, CaseIterable, Codable {

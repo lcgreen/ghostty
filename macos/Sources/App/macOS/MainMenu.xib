@@ -159,12 +159,6 @@
                                     <action selector="newWindow:" target="-1" id="pnf-fE-gHi"/>
                                 </connections>
                             </menuItem>
-                            <menuItem title="New Workspace Window" keyEquivalent="N" id="gst-WS-nw1">
-                                <modifierMask key="keyEquivalentModifierMask" shift="YES" command="YES"/>
-                                <connections>
-                                    <action selector="newWorkspaceWindow:" target="-1" id="gst-WS-ac1"/>
-                                </connections>
-                            </menuItem>
                             <menuItem title="New Tab" id="uTG-Vz-hJU">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <connections>

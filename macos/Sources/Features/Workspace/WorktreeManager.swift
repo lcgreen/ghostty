@@ -20,6 +20,7 @@ final class WorktreeManager: ObservableObject {
     @Published var templates: [WorkspaceTemplate] = []
     @Published var environmentProfiles: [EnvironmentProfile] = []
     @Published var activeProfileID: UUID?
+    @Published var externalEditors: [ExternalEditor] = ExternalEditor.defaults
 
     let notifier = WorkspaceNotifier()
 
@@ -45,6 +46,7 @@ final class WorktreeManager: ObservableObject {
         self.templates = templatePersistence.load()
         self.environmentProfiles = persistence.loadEnvironmentProfiles()
         self.activeProfileID = persistence.loadActiveProfileID()
+        self.externalEditors = WorktreeManager.loadExternalEditors()
         startAutoSave()
         detectCrashRecovery()
     }
@@ -105,6 +107,35 @@ final class WorktreeManager: ObservableObject {
         DispatchQueue.global(qos: .utility).async { [persistence] in
             persistence.saveEnvironmentProfiles(profiles, activeProfileID: profileID)
         }
+    }
+
+    // MARK: - External Editors
+
+    private static let externalEditorsKey = "ghostset.externalEditors"
+
+    private static func loadExternalEditors() -> [ExternalEditor] {
+        guard let data = UserDefaults.standard.data(forKey: externalEditorsKey),
+              let editors = try? JSONDecoder().decode([ExternalEditor].self, from: data),
+              !editors.isEmpty
+        else {
+            return ExternalEditor.defaults
+        }
+        return editors
+    }
+
+    func saveExternalEditors() {
+        guard let data = try? JSONEncoder().encode(externalEditors) else { return }
+        UserDefaults.standard.set(data, forKey: WorktreeManager.externalEditorsKey)
+    }
+
+    func addExternalEditor(_ editor: ExternalEditor) {
+        externalEditors.append(editor)
+        saveExternalEditors()
+    }
+
+    func removeExternalEditor(at offsets: IndexSet) {
+        externalEditors.remove(atOffsets: offsets)
+        saveExternalEditors()
     }
 
     func setActiveProfile(_ profileID: UUID?) {

@@ -263,8 +263,8 @@ Lines joined with `"\n"`.
 
 ## Known Issues
 
-1. **Drag drops UUID on terminal** — swipe reorder in sidebar uses `onMove` which works, but the workspace tab bar's drag can leak UUIDs if dropped on terminal.
-2. **Agent status is from workspace model, not live** — status dot shows `WorkspaceStatus` from the model, not whether the agent process is actually running.
+1. **Git panel is global** — `showingGitPanel` is sidebar-wide, not per-workspace. Panel stays open when switching workspaces (content updates, but this may be confusing).
+2. **Cursor bundle ID is fragile** — `com.todesktop.230313mzl4w4u92` is a ToDesktop-generated ID that may change between Cursor releases.
 
 ## Implemented Features (previously in Future Enhancements)
 
@@ -290,6 +290,8 @@ Lines joined with `"\n"`.
 | **Inline diff preview** | Expanded view shows up to 8 changed file names with `git diff --name-only` |
 | **Copy branch name** | Clipboard button next to branch in expanded detail |
 | **Workspace health indicators** | Merge conflicts (red warning triangle), branch age ("N behind main") |
+| **Template indicator** | Shows assigned template name as capsule pill next to branch |
+| **Deleting status** | Orange "Deleting..." status shown during async worktree deletion |
 
 ## Future Enhancements
 
