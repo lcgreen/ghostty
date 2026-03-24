@@ -122,20 +122,21 @@ Note: macOS `.sheet` modals are not resizable.
 
 ## Known Issues
 
-1. **Import does not deduplicate**: Importing templates with the same name creates duplicates
-2. **No validation on branch name**: The base branch field accepts any string
-3. **Sheets not resizable**: macOS `.sheet` modals are fixed-size
-4. **Template changes don't auto-propagate**: Editing a template doesn't update workspaces already using it (must re-apply)
+None currently tracked.
 
 ## Future Enhancements
 
 - Template marketplace / sharing via GitHub gists
-- Project detection — auto-suggest templates based on repo contents
-- Template variables (`{{port}}`, `{{env}}`) that prompt on creation
+- Project detection — auto-suggest templates based on repo contents (package.json → Node, Cargo.toml → Rust)
 - Template versioning / history
-- Present editor as a resizable window instead of sheet
 
 ## Changelog
 
 - 2026-03-20: Initial spec
 - 2026-03-24: Full implementation — layout editor, preview, lifecycle commands, startup restore, Apply Template action, Open Project, deleting status
+- 2026-03-24: Import deduplication, auto-propagate template edits, resizable editor window (NSWindow)
+- 2026-03-24: Branch validation (branchExists check, visual indicator in NewWorkspaceSheet, defense-in-depth in WorktreeManager)
+- 2026-03-24: Template variables — `{{name}}` substitution in commands/paths/lifecycle scripts, TemplateVariablePrompt sheet, variable editor in layout editor, `\{{` escaping
+- 2026-03-24: JSON validation — `validated()` method cleans snapshot data (removes fake commands from agent titles, clears redundant flat splits), applied on snapshot and import
+- 2026-03-24: Optional branch — baseBranch can be empty, template row hides empty fields, shows tab count as fallback subtitle
+- 2026-03-24: Template indicator in sidebar — workspace rows show assigned template name as capsule pill

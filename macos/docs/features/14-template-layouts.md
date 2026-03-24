@@ -182,15 +182,231 @@ All template types use **compiler-synthesized** `Equatable`/`Hashable`. Never ad
 }
 ```
 
+## JSON Reference
+
+### Field Reference
+
+#### WorkspaceTemplate (top-level object)
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `id` | string (UUID v4) | No | auto-generated | Stable identifier for the template |
+| `name` | string | Yes | — | Display name shown in the template picker |
+| `agent` | AgentType object | No | null | Default agent for new workspaces created from this template |
+| `baseBranch` | string | No | null | Git branch to use as the worktree base (e.g. `"main"`) |
+| `tags` | array of string | No | `[]` | Freeform labels for filtering |
+| `category` | string | No | `"Custom"` | Category shown in the template manager (e.g. `"Work"`, `"Personal"`) |
+| `onCreateCommand` | string | No | null | Shell script run after the workspace is created or the template is applied |
+| `onDestroyCommand` | string | No | null | Shell script run before the worktree is deleted |
+| `tabs` | array of TemplateTab | Yes | — | Ordered list of tabs to open |
+| `variables` | array of TemplateVariable | No | `[]` | Named variables prompted at apply time |
+
+#### TemplateTab
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `id` | string (UUID v4) | No | auto-generated | Stable tab identifier |
+| `title` | string | Yes | — | Tab display name |
+| `agent` | AgentType object | No | null | Agent to launch in this tab |
+| `command` | string | No | null | Command to run (used when no agent is set) |
+| `autoRun` | bool | No | `false` | `true` = press Enter after pre-filling; `false` = pre-fill only |
+| `isPinned` | bool | No | `false` | Pin the tab so it can't be closed accidentally |
+| `colorName` | string | No | null | Tab accent color (e.g. `"red"`, `"green"`, `"blue"`, `"orange"`, `"purple"`) |
+| `iconOverride` | string | No | null | SF Symbol name for a custom tab icon |
+| `splits` | array of TemplateSplit | No | `[]` | Flat list of additional panes (applied if `layout` is absent) |
+| `layout` | TemplatePane object | No | null | Recursive split tree; takes precedence over `splits` when present |
+
+#### TemplateSplit
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `id` | string (UUID v4) | No | auto-generated | Stable split identifier |
+| `command` | string | No | null | Command to run in this pane |
+| `autoRun` | bool | No | `false` | Press Enter after pre-filling |
+| `subdirectory` | string | No | null | Path relative to the worktree root (falls back to root if missing) |
+| `direction` | string | Yes | — | `"horizontal"` (side-by-side) or `"vertical"` (stacked) |
+
+#### TemplatePane (recursive, two variants)
+
+**Terminal leaf** — a single pane with an optional command:
+```json
+{
+  "terminal": {
+    "_0": {
+      "id": "...",
+      "command": "npm test",
+      "autoRun": true,
+      "subdirectory": "packages/core"
+    }
+  }
+}
+```
+
+**Split node** — two child panes and a direction:
+```json
+{
+  "split": {
+    "_0": {
+      "id": "...",
+      "first": { "<TemplatePane>" },
+      "second": { "<TemplatePane>" },
+      "direction": "horizontal"
+    }
+  }
+}
+```
+
+#### AgentType encoding
+
+Swift encodes `AgentType` as a keyed object, not a bare string:
+
+| Agent | JSON encoding |
+|-------|--------------|
+| Claude | `{"claude": {}}` |
+| Codex | `{"codex": {}}` |
+| Gemini | `{"gemini": {}}` |
+| Cursor | `{"cursor": {}}` |
+| Custom | `{"custom": "my-agent"}` |
+
+---
+
+### Minimal Example
+
+The simplest valid template — one tab, no splits, no lifecycle commands:
+
+```json
+[
+  {
+    "name": "Scratch",
+    "tabs": [
+      {
+        "title": "Terminal",
+        "autoRun": false
+      }
+    ]
+  }
+]
+```
+
+---
+
+### Full-Featured Example
+
+```json
+[
+  {
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "Full-Stack Dev — {{projectName}}",
+    "baseBranch": "main",
+    "category": "Work",
+    "tags": ["feature", "fullstack"],
+    "onCreateCommand": "cp ~/Source/app/.env ./app\nnpm install --prefix app",
+    "onDestroyCommand": "docker compose -f app/docker-compose.yml down",
+    "variables": [
+      {
+        "name": "projectName",
+        "prompt": "Project display name",
+        "defaultValue": "MyApp"
+      }
+    ],
+    "tabs": [
+      {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "title": "Claude",
+        "agent": {"claude": {}},
+        "autoRun": true,
+        "isPinned": true,
+        "colorName": "purple",
+        "iconOverride": "brain"
+      },
+      {
+        "id": "22222222-2222-2222-2222-222222222222",
+        "title": "Backend",
+        "command": "make run",
+        "autoRun": true,
+        "colorName": "green",
+        "layout": {
+          "split": {
+            "_0": {
+              "id": "33333333-3333-3333-3333-333333333333",
+              "direction": "horizontal",
+              "first": {
+                "terminal": {
+                  "_0": {
+                    "id": "44444444-4444-4444-4444-444444444444",
+                    "command": "make run",
+                    "autoRun": true,
+                    "subdirectory": "api"
+                  }
+                }
+              },
+              "second": {
+                "terminal": {
+                  "_0": {
+                    "id": "55555555-5555-5555-5555-555555555555",
+                    "command": "make run-worker",
+                    "autoRun": true,
+                    "subdirectory": "api"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "66666666-6666-6666-6666-666666666666",
+        "title": "Frontend — {{projectName}}",
+        "command": "yarn dev",
+        "autoRun": true,
+        "colorName": "blue",
+        "splits": [
+          {
+            "id": "77777777-7777-7777-7777-777777777777",
+            "command": "yarn test --watch",
+            "autoRun": false,
+            "subdirectory": "web",
+            "direction": "vertical"
+          }
+        ]
+      }
+    ]
+  }
+]
+```
+
+---
+
+### Notes
+
+**UUID generation** — Any UUID v4 is valid. Generate one in the terminal with:
+```bash
+uuidgen | tr '[:upper:]' '[:lower:]'
+```
+Omitting `id` fields is also fine; they are auto-generated on import.
+
+**Date format** — Dates (if used in variable defaults or commands) should follow ISO 8601, e.g. `2026-03-24T12:00:00Z`.
+
+**Agent encoding** — `AgentType` is a Swift enum encoded as a keyed object: `{"claude": {}}`, not `"claude"`. Passing a bare string will fail to decode.
+
+**TemplatePane encoding** — The indirect enum encodes with a type wrapper: `{"terminal": {"_0": {...}}}` for leaf nodes and `{"split": {"_0": {...}}}` for split nodes. The `_0` key is the Swift synthesized associated-value label.
+
+**Variable substitution** — `{{name}}` placeholders in any string field are replaced with the value provided at apply time. Use `\{{` to emit a literal `{{`. Substitution is single-pass (variables in replacement values are not expanded again).
+
+**`validated()` cleanup** — When a template is applied or imported, `validated()` removes agent-title-only tab commands (commands that match the agent name used as a display title), and clears degenerate flat splits that duplicate the main pane. This keeps snapshots captured from live workspaces clean.
+
+**File location** — Templates are stored in `~/.ghostset/templates.json` as a JSON **array** of `WorkspaceTemplate` objects (not a single object). The file is created automatically when you save your first template via the UI.
+
 ## Known Constraints
 
 1. **Split tree structure** — recursive binary tree; captured/recreated by walking the tree
-2. **Command detection is heuristic** — surface titles aren't always the running command
-3. **Subdirectories may not exist** — falls back to worktree root
-4. **Template changes don't propagate** — editing a template doesn't update existing workspaces
-5. **Sheets not resizable** — macOS `.sheet` limitation
+2. **Subdirectories may not exist** — falls back to worktree root
+3. **Command detection heuristic** — when capturing a live workspace, the snapshot filters out tab titles that begin with `@`, `/`, or `~`, or contain non-ASCII symbols, treating them as agent-generated display strings rather than runnable commands
+4. **Single-pass variable substitution** — `{{variable}}` placeholders are expanded once; if a replacement value itself contains `{{...}}`, those inner placeholders are not expanded
 
 ## Changelog
 
 - 2026-03-20: Initial spec, data model, JSON format
 - 2026-03-24: Full implementation complete — editor, preview, lifecycle commands, startup restore, Apply Template, deleting status
+- 2026-03-24: Import deduplication, auto-propagate template edits, resizable editor window (NSWindow)
+- 2026-03-24: Branch validation, template variables (`{{name}}` substitution + prompt UI), JSON validation (`validated()` cleans snapshots), optional baseBranch, template indicator in workspace sidebar rows
