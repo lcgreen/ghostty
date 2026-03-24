@@ -24,18 +24,12 @@ struct TemplateManagerView: View {
             Divider()
             footer
         }
-        .frame(width: 420, height: 400)
+        .frame(minWidth: 420, idealWidth: 500, minHeight: 400, idealHeight: 500)
         .background(Color(nsColor: .windowBackgroundColor))
         .sheet(isPresented: $showingLayoutEditor) {
-            if editingLayout != nil {
-                TemplateLayoutEditor(template: Binding(
-                    get: { editingLayout! },
-                    set: { editingLayout = $0 }
-                ))
-                .onDisappear {
-                    if let updated = editingLayout {
-                        manager.saveTemplate(updated)
-                    }
+            if let layout = editingLayout {
+                TemplateLayoutEditor(original: layout) { updated in
+                    manager.saveTemplate(updated)
                     editingLayout = nil
                 }
             }
@@ -148,7 +142,7 @@ struct TemplateManagerView: View {
             // Layout preview
             if !template.tabs.isEmpty {
                 TemplateLayoutPreview(template: template)
-                    .frame(width: 80, height: 24)
+                    .frame(width: 160, height: 36)
             }
 
             Button {
@@ -296,12 +290,21 @@ struct TemplateManagerView: View {
     }
 
     private func saveForm(original: WorkspaceTemplate?) {
-        let saved = WorkspaceTemplate(
-            name: formName, baseBranch: formBranch, agent: formAgent,
-            tags: Array(formTags), category: formCategory
-        )
-        if let old = original { manager.removeTemplate(old) }
-        manager.saveTemplate(saved)
+        if var updated = original {
+            // Update in place — preserve id, tabs, and other fields
+            updated.name = formName
+            updated.baseBranch = formBranch
+            updated.agent = formAgent
+            updated.tags = Array(formTags)
+            updated.category = formCategory
+            manager.saveTemplate(updated)
+        } else {
+            let saved = WorkspaceTemplate(
+                name: formName, baseBranch: formBranch, agent: formAgent,
+                tags: Array(formTags), category: formCategory
+            )
+            manager.saveTemplate(saved)
+        }
         cancelForm()
     }
 

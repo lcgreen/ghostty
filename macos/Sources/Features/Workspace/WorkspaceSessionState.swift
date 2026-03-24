@@ -27,6 +27,8 @@ struct TabSessionState: Codable {
     let isPinned: Bool
     let colorName: String?
     let iconOverride: String?
+    /// Commands for each split pane (indexed by position in tree traversal).
+    let splitCommands: [SplitCommand]
 
     init(
         id: UUID = UUID(),
@@ -36,7 +38,8 @@ struct TabSessionState: Codable {
         sessionID: String? = nil,
         isPinned: Bool = false,
         colorName: String? = nil,
-        iconOverride: String? = nil
+        iconOverride: String? = nil,
+        splitCommands: [SplitCommand] = []
     ) {
         self.id = id
         self.title = title
@@ -46,6 +49,7 @@ struct TabSessionState: Codable {
         self.isPinned = isPinned
         self.colorName = colorName
         self.iconOverride = iconOverride
+        self.splitCommands = splitCommands
     }
 
     // Backward-compatible decoding
@@ -59,7 +63,14 @@ struct TabSessionState: Codable {
         isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         colorName = try container.decodeIfPresent(String.self, forKey: .colorName)
         iconOverride = try container.decodeIfPresent(String.self, forKey: .iconOverride)
+        splitCommands = try container.decodeIfPresent([SplitCommand].self, forKey: .splitCommands) ?? []
     }
+}
+
+/// A command associated with a split pane, persisted for auto-run on restore.
+struct SplitCommand: Codable {
+    let command: String
+    let autoRun: Bool
 }
 
 /// Recursive representation of a split tree layout (without live surface references).
@@ -74,10 +85,16 @@ struct LeafState: Codable {
     let workingDirectory: String?
     /// The last terminal title — used to suggest re-running the last command on restore.
     let lastTitle: String?
+    /// The command to auto-run on restore (from template).
+    let command: String?
+    /// Whether the command should auto-execute on restore.
+    let autoRun: Bool
 
-    init(workingDirectory: String? = nil, lastTitle: String? = nil) {
+    init(workingDirectory: String? = nil, lastTitle: String? = nil, command: String? = nil, autoRun: Bool = false) {
         self.workingDirectory = workingDirectory
         self.lastTitle = lastTitle
+        self.command = command
+        self.autoRun = autoRun
     }
 
     // Backward-compatible decoding
@@ -85,6 +102,8 @@ struct LeafState: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         workingDirectory = try container.decodeIfPresent(String.self, forKey: .workingDirectory)
         lastTitle = try container.decodeIfPresent(String.self, forKey: .lastTitle)
+        command = try container.decodeIfPresent(String.self, forKey: .command)
+        autoRun = try container.decodeIfPresent(Bool.self, forKey: .autoRun) ?? false
     }
 }
 
@@ -138,7 +157,8 @@ extension SplitLayout {
     func toNode(
         app: ghostty_app_t,
         baseConfig: Ghostty.SurfaceConfiguration? = nil,
-        isFirstLeaf: inout Bool
+        isFirstLeaf: inout Bool,
+        splitCommands: inout ArraySlice<SplitCommand>
     ) -> SplitTree<Ghostty.SurfaceView>.Node {
         switch self {
         case .leaf(let leaf):
@@ -153,12 +173,19 @@ extension SplitLayout {
             }
             isFirstLeaf = false
 
-            // Pre-fill last command for ALL leaves (agent or not)
-            // If no agent initialInput was set, use the last title as a command hint
-            if config.initialInput == nil, let title = leaf.lastTitle {
-                if !title.contains("@") && !title.hasPrefix("/") && !title.hasPrefix("~") {
-                    config.initialInput = title
+            // Auto-run saved command from template, or pre-fill last title as hint
+            if config.initialInput == nil {
+                if let splitCmd = splitCommands.first {
+                    splitCommands = splitCommands.dropFirst()
+                    config.initialInput = splitCmd.command + (splitCmd.autoRun ? "\n" : "")
+                } else if let title = leaf.lastTitle {
+                    if !title.contains("@") && !title.hasPrefix("/") && !title.hasPrefix("~") {
+                        config.initialInput = title
+                    }
                 }
+            } else {
+                // Consume the command even if not used (agent leaf)
+                if !splitCommands.isEmpty { splitCommands = splitCommands.dropFirst() }
             }
             return .leaf(view: Ghostty.SurfaceView(app, baseConfig: config))
 
@@ -170,8 +197,8 @@ extension SplitLayout {
             return .split(.init(
                 direction: direction,
                 ratio: split.ratio,
-                left: split.left.toNode(app: app, baseConfig: baseConfig, isFirstLeaf: &isFirstLeaf),
-                right: split.right.toNode(app: app, baseConfig: baseConfig, isFirstLeaf: &isFirstLeaf)
+                left: split.left.toNode(app: app, baseConfig: baseConfig, isFirstLeaf: &isFirstLeaf, splitCommands: &splitCommands),
+                right: split.right.toNode(app: app, baseConfig: baseConfig, isFirstLeaf: &isFirstLeaf, splitCommands: &splitCommands)
             ))
         }
     }
@@ -179,10 +206,12 @@ extension SplitLayout {
     /// Rebuild a live SplitTree from a persisted layout.
     func toSplitTree(
         app: ghostty_app_t,
-        baseConfig: Ghostty.SurfaceConfiguration? = nil
+        baseConfig: Ghostty.SurfaceConfiguration? = nil,
+        splitCommands: [SplitCommand] = []
     ) -> SplitTree<Ghostty.SurfaceView> {
         var isFirstLeaf = true
-        return SplitTree(root: toNode(app: app, baseConfig: baseConfig, isFirstLeaf: &isFirstLeaf), zoomed: nil)
+        var cmds = splitCommands[...]
+        return SplitTree(root: toNode(app: app, baseConfig: baseConfig, isFirstLeaf: &isFirstLeaf, splitCommands: &cmds), zoomed: nil)
     }
 }
 

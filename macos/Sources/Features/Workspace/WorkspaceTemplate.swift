@@ -36,8 +36,6 @@ struct TemplateTab: Codable, Identifiable, Hashable {
         self.layout = layout
     }
 
-    func hash(into hasher: inout Hasher) { hasher.combine(id) }
-    static func == (lhs: TemplateTab, rhs: TemplateTab) -> Bool { lhs.id == rhs.id }
 }
 
 /// A pane definition — can be a leaf (single terminal) or a split (two panes).
@@ -53,8 +51,6 @@ indirect enum TemplatePane: Codable, Identifiable, Hashable {
         }
     }
 
-    func hash(into hasher: inout Hasher) { hasher.combine(id) }
-    static func == (lhs: TemplatePane, rhs: TemplatePane) -> Bool { lhs.id == rhs.id }
 }
 
 /// A single terminal pane within a template.
@@ -108,8 +104,6 @@ struct TemplateSplit: Codable, Identifiable, Hashable {
         self.direction = direction
     }
 
-    func hash(into hasher: inout Hasher) { hasher.combine(id) }
-    static func == (lhs: TemplateSplit, rhs: TemplateSplit) -> Bool { lhs.id == rhs.id }
 }
 
 /// A reusable workspace template — full workspace snapshot including tabs, splits, and commands.
@@ -123,6 +117,8 @@ struct WorkspaceTemplate: Codable, Identifiable, Hashable {
     var taskDescription: String?
     var environmentVariables: [String: String]
     var setupCommand: String?
+    var onCreateCommand: String?   // Multi-line script to run in worktree after workspace is created
+    var onDestroyCommand: String?  // Multi-line script to run in worktree before workspace is destroyed
     var category: TemplateCategory
     var tabs: [TemplateTab]    // Full tab layout with splits and commands
     let createdAt: Date
@@ -136,6 +132,8 @@ struct WorkspaceTemplate: Codable, Identifiable, Hashable {
         taskDescription: String? = nil,
         environmentVariables: [String: String] = [:],
         setupCommand: String? = nil,
+        onCreateCommand: String? = nil,
+        onDestroyCommand: String? = nil,
         category: TemplateCategory = .aiAgents,
         tabs: [TemplateTab] = []
     ) {
@@ -148,6 +146,8 @@ struct WorkspaceTemplate: Codable, Identifiable, Hashable {
         self.taskDescription = taskDescription
         self.environmentVariables = environmentVariables
         self.setupCommand = setupCommand
+        self.onCreateCommand = onCreateCommand
+        self.onDestroyCommand = onDestroyCommand
         self.category = category
         self.tabs = tabs
         self.createdAt = Date()
@@ -165,6 +165,8 @@ struct WorkspaceTemplate: Codable, Identifiable, Hashable {
         taskDescription = try container.decodeIfPresent(String.self, forKey: .taskDescription)
         environmentVariables = try container.decodeIfPresent([String: String].self, forKey: .environmentVariables) ?? [:]
         setupCommand = try container.decodeIfPresent(String.self, forKey: .setupCommand)
+        onCreateCommand = try container.decodeIfPresent(String.self, forKey: .onCreateCommand)
+        onDestroyCommand = try container.decodeIfPresent(String.self, forKey: .onDestroyCommand)
         category = try container.decodeIfPresent(TemplateCategory.self, forKey: .category) ?? .aiAgents
         tabs = try container.decodeIfPresent([TemplateTab].self, forKey: .tabs) ?? []
         createdAt = try container.decode(Date.self, forKey: .createdAt)
@@ -332,13 +334,6 @@ struct WorkspaceTemplate: Codable, Identifiable, Hashable {
         ),
     ]
 
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
-
-    static func == (lhs: WorkspaceTemplate, rhs: WorkspaceTemplate) -> Bool {
-        lhs.id == rhs.id
-    }
 }
 
 // MARK: - Template Category

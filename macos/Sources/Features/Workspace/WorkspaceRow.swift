@@ -346,6 +346,7 @@ struct WorkspaceRow: View {
         case .ready: return .blue
         case .running: return .green
         case .stopped: return .gray
+        case .deleting: return .orange
         case .error: return .red
         }
     }

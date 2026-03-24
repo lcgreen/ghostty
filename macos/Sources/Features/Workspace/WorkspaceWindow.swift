@@ -50,15 +50,22 @@ struct WorkspaceWindow: View {
                 .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ghostset.applyTemplate"))) { notification in
                     guard let info = notification.userInfo,
                           let template = info["template"] as? WorkspaceTemplate,
-                          let wsID = info["workspaceID"] as? UUID,
-                          wsID == selectedWorkspaceID,
-                          let app = ghostty.app else { return }
-                    let workspace = selectedWorkspace
-                    let config: Ghostty.SurfaceConfiguration? = workspace.map {
-                        WorkspaceWindowController.surfaceConfiguration(for: $0)
+                          let wsID = info["workspaceID"] as? UUID else { return }
+                    // Delay to let the workspace creation finish
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        guard wsID == selectedWorkspaceID,
+                              let app = ghostty.app else { return }
+                        let workspace = selectedWorkspace
+                        let config: Ghostty.SurfaceConfiguration? = workspace.map {
+                            WorkspaceWindowController.surfaceConfiguration(for: $0)
+                        }
+                        vmCache.applyTemplate(template, for: workspace, app: app, baseConfig: config)
+                        bindActiveViewModel()
+                        // Save immediately so the layout persists across restarts
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            saveAllSessions()
+                        }
                     }
-                    vmCache.applyTemplate(template, for: workspace, app: app, baseConfig: config)
-                    bindActiveViewModel()
                 }
                 // Auto-save sessions every 30 seconds
                 .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
@@ -68,7 +75,7 @@ struct WorkspaceWindow: View {
                     guard let info = notification.userInfo,
                           let targetID = info["targetWorkspaceID"] as? UUID,
                           targetID == selectedWorkspaceID,
-                          let app = ghostty.app else { return }
+                          ghostty.app != nil else { return }
                     let agent = info["agent"] as? AgentType
 
                     // Switch to the target workspace and create a fresh tab there
@@ -208,12 +215,35 @@ struct WorkspaceWindow: View {
     // MARK: - Session Persistence
 
     private func saveAllSessions() {
+        let templates = TemplatePersistence().load()
         for (wsID, group) in vmCache.allGroups {
             guard let wsID else { continue }
+            // Find template for this workspace to save commands
+            let workspace = ghostty.workspaceManager.workspaces.first(where: { $0.id == wsID })
+            let template = workspace?.templateID.flatMap { tid in templates.first(where: { $0.id == tid }) }
+
             // Save ALL tabs for this workspace
-            let tabStates = group.tabs.compactMap { tab -> TabSessionState? in
+            let tabStates = group.tabs.enumerated().compactMap { (tabIdx, tab) -> TabSessionState? in
                 guard let layout = SplitLayout.from(tree: tab.viewModel.surfaceTree) else { return nil }
-                return TabSessionState(title: tab.title, splitLayout: layout, agent: tab.agent, sessionID: tab.sessionID, isPinned: tab.isPinned, colorName: tab.colorName, iconOverride: tab.iconOverride)
+
+                // Extract commands from the template tab for auto-run on restore
+                var splitCommands: [SplitCommand] = []
+                if let templateTab = tabIdx < (template?.tabs.count ?? 0) ? template?.tabs[tabIdx] : nil {
+                    // Main command
+                    if let cmd = templateTab.command, !cmd.isEmpty {
+                        splitCommands.append(SplitCommand(command: cmd, autoRun: templateTab.autoRun))
+                    } else if templateTab.agent != nil {
+                        splitCommands.append(SplitCommand(command: "", autoRun: false))
+                    }
+                    // Split commands
+                    for split in templateTab.splits {
+                        if let cmd = split.command, !cmd.isEmpty {
+                            splitCommands.append(SplitCommand(command: cmd, autoRun: split.autoRun))
+                        }
+                    }
+                }
+
+                return TabSessionState(title: tab.title, splitLayout: layout, agent: tab.agent, sessionID: tab.sessionID, isPinned: tab.isPinned, colorName: tab.colorName, iconOverride: tab.iconOverride, splitCommands: splitCommands)
             }
             guard !tabStates.isEmpty else { continue }
             let session = WorkspaceSessionState(
@@ -368,7 +398,7 @@ private struct WorkspaceDetailContent: View {
     private func statusColor(_ status: WorkspaceStatus) -> Color {
         switch status {
         case .creating: .orange; case .ready: .blue
-        case .running: .green; case .stopped: .gray; case .error: .red
+        case .running: .green; case .stopped: .gray; case .deleting: .orange; case .error: .red
         }
     }
 }

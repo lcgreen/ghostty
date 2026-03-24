@@ -278,10 +278,9 @@ final class WorktreeManager: ObservableObject {
 
     /// Deletes a workspace: removes worktree from disk, optionally deletes branch.
     func deleteWorkspace(_ workspace: Workspace, deleteBranch: Bool = false) async throws {
-        // Log teardown command if configured (not executed automatically for security)
-        let config = loadRepoConfig(repo: workspace.repoPath)
-        if let teardownCmd = config?.teardownCommand {
-            logger.warning("Workspace config contains teardownCommand '\(teardownCmd)' — skipped automatic execution")
+        // Run onDestroy lifecycle command before removing
+        if let cmd = workspace.onDestroyCommand, !cmd.isEmpty {
+            runLifecycleCommand(cmd, in: workspace.worktreePath)
         }
 
         // Remove the git worktree from disk
@@ -381,6 +380,34 @@ final class WorktreeManager: ObservableObject {
 
     private func gitBranchDelete(repo: String, branch: String) async throws {
         _ = try await shell("git", "-C", repo, "branch", "-d", branch)
+    }
+
+    // MARK: - Lifecycle Commands
+
+    /// Run a lifecycle command (onCreate/onDestroy) in the given working directory.
+    /// Runs asynchronously on a background queue; failures are logged, not thrown.
+    func runLifecycleCommand(_ command: String, in workingDirectory: String) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let process = Process()
+            let stderr = Pipe()
+
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-c", command]
+            process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
+            process.standardError = stderr
+
+            do {
+                try process.run()
+                process.waitUntilExit()
+                if process.terminationStatus != 0 {
+                    let errData = stderr.fileHandleForReading.readDataToEndOfFile()
+                    let errStr = String(data: errData, encoding: .utf8) ?? ""
+                    Ghostty.logger.warning("Lifecycle command failed (\(process.terminationStatus)): \(errStr)")
+                }
+            } catch {
+                Ghostty.logger.warning("Lifecycle command error: \(error)")
+            }
+        }
     }
 
     // MARK: - Shell Execution

@@ -8,6 +8,7 @@ import GhosttyKit
 class AppDelegate: NSObject,
                     ObservableObject,
                     NSApplicationDelegate,
+                    NSMenuDelegate,
                     UNUserNotificationCenterDelegate,
                     GhosttyAppDelegate {
     // The application logger. We should probably move this at some point to a dedicated
@@ -311,6 +312,7 @@ class AppDelegate: NSObject,
 
         // Setup our menu
         setupMenuImages()
+        setupWorkspaceMenu()
 
         // Setup signal handlers
         setupSignals()
@@ -985,6 +987,19 @@ class AppDelegate: NSObject,
         controller.showWindow(self)
     }
 
+    @IBAction func openWorkspace(_ sender: Any?) {
+        guard let item = sender as? NSMenuItem,
+              let wsID = item.representedObject as? UUID else { return }
+        // Find an existing workspace window or create one
+        if let existing = WorkspaceWindowController.all.first(where: { $0.selectedWorkspaceID == wsID }) {
+            existing.showWindow(self)
+            existing.window?.makeKeyAndOrderFront(self)
+        } else {
+            let controller = WorkspaceWindowController(ghostty, workspaceID: wsID)
+            controller.showWindow(self)
+        }
+    }
+
     @IBAction func newTab(_ sender: Any?) {
         _ = TerminalController.newTab(
             ghostty,
@@ -1127,6 +1142,51 @@ extension AppDelegate {
         dockMenu.addItem(newWorkspace)
         dockMenu.addItem(newWindow)
         dockMenu.addItem(newTab)
+    }
+
+    // MARK: - NSMenuDelegate
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        // Only handle the "Open Workspace" submenu
+        guard menu.title == "Open Workspace" else { return }
+        menu.removeAllItems()
+
+        let workspaces = ghostty.workspaceManager.workspaces
+            .filter { !$0.isArchived }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
+        if workspaces.isEmpty {
+            let empty = NSMenuItem(title: "No workspaces", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+            return
+        }
+
+        for ws in workspaces {
+            let item = NSMenuItem(title: ws.name, action: #selector(openWorkspace), keyEquivalent: "")
+            item.representedObject = ws.id
+            if let agent = ws.agent {
+                item.image = NSImage(systemSymbolName: agent.iconName, accessibilityDescription: agent.displayName)?
+                    .withSymbolConfiguration(.init(pointSize: 12, weight: .regular))
+            }
+            menu.addItem(item)
+        }
+    }
+
+    /// Inserts an "Open Workspace" submenu into the File menu, right after "New Workspace Window".
+    private func setupWorkspaceMenu() {
+        guard let mainMenu = NSApp.mainMenu,
+              let fileMenu = mainMenu.items.first(where: { $0.submenu?.items.contains(where: { $0.action == #selector(newWorkspaceWindow) }) ?? false })?.submenu else { return }
+
+        guard let wsIndex = fileMenu.items.firstIndex(where: { $0.action == #selector(newWorkspaceWindow) }) else { return }
+
+        let openWSItem = NSMenuItem(title: "Open Workspace", action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: "Open Workspace")
+        submenu.delegate = self
+        openWSItem.submenu = submenu
+        openWSItem.tag = 9999  // tag to find it later
+
+        fileMenu.insertItem(openWSItem, at: wsIndex + 1)
     }
 
     /// Setup all the images for our menu items.

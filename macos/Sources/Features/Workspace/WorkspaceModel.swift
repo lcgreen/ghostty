@@ -18,6 +18,9 @@ struct Workspace: Identifiable, Codable, Hashable {
     var isPinned: Bool
     var isArchived: Bool
     var sortOrder: Int
+    var onCreateCommand: String?
+    var onDestroyCommand: String?
+    var templateID: UUID?
 
     init(
         name: String,
@@ -29,7 +32,9 @@ struct Workspace: Identifiable, Codable, Hashable {
         taskDescription: String? = nil,
         isPinned: Bool = false,
         isArchived: Bool = false,
-        sortOrder: Int = 0
+        sortOrder: Int = 0,
+        onCreateCommand: String? = nil,
+        onDestroyCommand: String? = nil
     ) {
         self.id = UUID()
         self.name = name
@@ -44,6 +49,8 @@ struct Workspace: Identifiable, Codable, Hashable {
         self.isPinned = isPinned
         self.isArchived = isArchived
         self.sortOrder = sortOrder
+        self.onCreateCommand = onCreateCommand
+        self.onDestroyCommand = onDestroyCommand
     }
 
     // Backward-compatible decoding — old persisted data won't have new fields
@@ -62,6 +69,9 @@ struct Workspace: Identifiable, Codable, Hashable {
         isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
         sortOrder = try container.decodeIfPresent(Int.self, forKey: .sortOrder) ?? 0
+        onCreateCommand = try container.decodeIfPresent(String.self, forKey: .onCreateCommand)
+        onDestroyCommand = try container.decodeIfPresent(String.self, forKey: .onDestroyCommand)
+        templateID = try container.decodeIfPresent(UUID.self, forKey: .templateID)
     }
 
     /// Returns a copy with the given name (immutable rename).
@@ -112,6 +122,7 @@ enum WorkspaceStatus: Codable, Equatable {
     case ready
     case running(pid: Int32)
     case stopped
+    case deleting
     case error(String)
 
     var isActive: Bool {
@@ -127,6 +138,7 @@ enum WorkspaceStatus: Codable, Equatable {
         case .ready: return "Ready"
         case .running: return "Running"
         case .stopped: return "Stopped"
+        case .deleting: return "Deleting..."
         case .error(let msg): return "Error: \(msg)"
         }
     }
@@ -137,6 +149,7 @@ enum WorkspaceStatus: Codable, Equatable {
         case .ready: return "circle"
         case .running: return "circle.fill"
         case .stopped: return "stop.circle"
+        case .deleting: return "trash.circle"
         case .error: return "exclamationmark.circle"
         }
     }
@@ -147,6 +160,7 @@ enum WorkspaceStatus: Codable, Equatable {
         case .ready: return "blue"
         case .running: return "green"
         case .stopped: return "gray"
+        case .deleting: return "orange"
         case .error: return "red"
         }
     }

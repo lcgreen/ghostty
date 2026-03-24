@@ -2,31 +2,98 @@ import SwiftUI
 
 /// Full template layout editor — edit tabs, splits, commands, and visual settings.
 struct TemplateLayoutEditor: View {
-    @Binding var template: WorkspaceTemplate
+    var original: WorkspaceTemplate
+    var onSave: (WorkspaceTemplate) -> Void
     @Environment(\.dismiss) private var dismiss
 
-    @State private var selectedTabIndex: Int = 0
+    @State private var template: WorkspaceTemplate
+    @State private var selectedTabID: UUID?
+    @State private var showingCommands = false
+
+    init(original: WorkspaceTemplate, onSave: @escaping (WorkspaceTemplate) -> Void) {
+        self.original = original
+        self.onSave = onSave
+        self._template = State(initialValue: original)
+        self._selectedTabID = State(initialValue: original.tabs.first?.id)
+    }
+
+    private var selectedTabIndex: Int {
+        guard let id = selectedTabID else { return 0 }
+        return template.tabs.firstIndex(where: { $0.id == id }) ?? 0
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            // Header
+            HStack {
+                TextField("Template name", text: $template.name)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 14, weight: .semibold))
+                Spacer()
+            }
+            .padding(12)
+
             Divider()
 
-            HSplitView {
+            // Main content: tab list + detail
+            HStack(spacing: 0) {
                 // Left: tab list
-                tabList
-                    .frame(minWidth: 160, maxWidth: 200)
+                VStack(spacing: 0) {
+                    List(selection: $selectedTabID) {
+                        ForEach(template.tabs) { tab in
+                            tabListRow(tab)
+                                .tag(tab.id)
+                        }
+                        .onMove { source, dest in
+                            template.tabs.move(fromOffsets: source, toOffset: dest)
+                        }
+                    }
+                    .listStyle(.sidebar)
+
+                    Divider()
+
+                    HStack(spacing: 4) {
+                        Button { addTab() } label: {
+                            Image(systemName: "plus").font(.system(size: 10))
+                        }.buttonStyle(.plain)
+
+                        if template.tabs.count > 1 {
+                            Button { moveTabUp() } label: {
+                                Image(systemName: "chevron.up").font(.system(size: 9))
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(selectedTabIndex <= 0)
+
+                            Button { moveTabDown() } label: {
+                                Image(systemName: "chevron.down").font(.system(size: 9))
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(selectedTabIndex >= template.tabs.count - 1)
+
+                            Spacer()
+
+                            Button { removeTab() } label: {
+                                Image(systemName: "minus").font(.system(size: 10))
+                            }.buttonStyle(.plain)
+                        } else {
+                            Spacer()
+                        }
+                    }
+                    .padding(6)
+                }
+                .frame(width: 180)
+
+                Divider()
 
                 // Right: selected tab detail
-                if let tab = selectedTab {
-                    tabDetail(tab)
-                } else {
-                    Text("Select a tab")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+                tabDetailView
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+
+            Divider()
+
+            // Lifecycle commands
+            commandsSection
 
             Divider()
 
@@ -40,68 +107,26 @@ struct TemplateLayoutEditor: View {
             .padding(.vertical, 8)
 
             Divider()
-            footer
+
+            // Footer
+            HStack {
+                Button("Copy JSON") { copyJSON() }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).font(.system(size: 11))
+                Spacer()
+                Button("Done") { onSave(template); dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(12)
         }
-        .frame(width: 560, height: 480)
+        .frame(minWidth: 560, idealWidth: 640, minHeight: 480, idealHeight: 580)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    private var selectedTab: TemplateTab? {
-        guard selectedTabIndex >= 0 && selectedTabIndex < template.tabs.count else { return nil }
-        return template.tabs[selectedTabIndex]
-    }
+    // MARK: - Tab List Row
 
-    // MARK: - Header
-
-    private var header: some View {
-        HStack {
-            TextField("Template name", text: $template.name)
-                .textFieldStyle(.plain)
-                .font(.system(size: 14, weight: .semibold))
-            Spacer()
-        }
-        .padding(12)
-    }
-
-    // MARK: - Tab List
-
-    private var tabList: some View {
-        VStack(spacing: 0) {
-            List(selection: Binding(
-                get: { selectedTabIndex },
-                set: { selectedTabIndex = $0 }
-            )) {
-                ForEach(Array(template.tabs.enumerated()), id: \.element.id) { index, tab in
-                    tabListRow(tab, index: index)
-                        .tag(index)
-                }
-                .onMove { source, dest in
-                    template.tabs.move(fromOffsets: source, toOffset: dest)
-                }
-            }
-            .listStyle(.sidebar)
-
-            Divider()
-
-            HStack {
-                Button { addTab() } label: {
-                    Image(systemName: "plus").font(.system(size: 10))
-                }
-                .buttonStyle(.plain)
-                Spacer()
-                if template.tabs.count > 1 {
-                    Button { removeTab() } label: {
-                        Image(systemName: "minus").font(.system(size: 10))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(6)
-        }
-    }
-
-    private func tabListRow(_ tab: TemplateTab, index: Int) -> some View {
-        HStack(spacing: 4) {
+    private func tabListRow(_ tab: TemplateTab) -> some View {
+        let index = template.tabs.firstIndex(where: { $0.id == tab.id }) ?? 0
+        return HStack(spacing: 4) {
             if tab.isPinned {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 7))
@@ -130,24 +155,25 @@ struct TemplateLayoutEditor: View {
 
     // MARK: - Tab Detail
 
-    private func tabDetail(_ tab: TemplateTab) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                // Title
-                field("Title") {
-                    TextField("Tab title", text: tabBinding(\.title))
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12))
-                }
+    @ViewBuilder
+    private var tabDetailView: some View {
+        let idx = selectedTabIndex
+        if idx >= 0 && idx < template.tabs.count {
+            let tab = template.tabs[idx]
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    field("Title") {
+                        TextField("Tab title", text: $template.tabs[idx].title)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 12))
+                    }
 
-                // Agent
-                field("Agent") {
-                    HStack {
+                    field("Agent") {
                         Menu {
-                            Button("None") { updateTab { $0.agent = nil } }
+                            Button("None") { template.tabs[idx].agent = nil }
                             Divider()
                             ForEach(AgentType.builtIn, id: \.displayName) { agent in
-                                Button(agent.displayName) { updateTab { $0.agent = agent } }
+                                Button(agent.displayName) { template.tabs[idx].agent = agent }
                             }
                         } label: {
                             HStack(spacing: 4) {
@@ -165,92 +191,98 @@ struct TemplateLayoutEditor: View {
                         }
                         .menuStyle(.borderlessButton).fixedSize()
                     }
-                }
 
-                // Command
-                if tab.agent == nil {
-                    field("Command") {
-                        HStack {
-                            TextField("e.g., make run", text: tabBinding(\.command, default: ""))
+                    if tab.agent == nil {
+                        field("Command") {
+                            HStack {
+                                TextField("e.g., make run", text: Binding(
+                                    get: { template.tabs[idx].command ?? "" },
+                                    set: { template.tabs[idx].command = $0.isEmpty ? nil : $0 }
+                                ))
                                 .textFieldStyle(.roundedBorder)
                                 .font(.system(size: 11, design: .monospaced))
-                            Toggle("Auto-run", isOn: tabBinding(\.autoRun))
+                                Toggle("Auto-run", isOn: $template.tabs[idx].autoRun)
+                                    .toggleStyle(.checkbox)
+                                    .font(.system(size: 10))
+                            }
+                        }
+                    }
+
+                    HStack(spacing: 16) {
+                        field("Pin") {
+                            Toggle("Pinned", isOn: $template.tabs[idx].isPinned)
                                 .toggleStyle(.checkbox)
                                 .font(.system(size: 10))
                         }
-                    }
-                }
 
-                // Visual
-                HStack(spacing: 16) {
-                    field("Pin") {
-                        Toggle("Pinned", isOn: tabBinding(\.isPinned))
-                            .toggleStyle(.checkbox)
-                            .font(.system(size: 10))
-                    }
-
-                    field("Color") {
-                        HStack(spacing: 3) {
-                            Button { updateTab { $0.colorName = nil } } label: {
-                                Circle().strokeBorder(.secondary, lineWidth: 0.5).frame(width: 12, height: 12)
-                            }.buttonStyle(.plain)
-                            ForEach(["blue", "green", "orange", "red", "purple", "teal"], id: \.self) { c in
-                                Button { updateTab { $0.colorName = c } } label: {
-                                    Circle().fill(TagDefinition.swiftUIColor(for: c)).frame(width: 12, height: 12)
-                                        .overlay(Circle().strokeBorder(.white, lineWidth: tab.colorName == c ? 1.5 : 0))
+                        field("Color") {
+                            HStack(spacing: 3) {
+                                Button { template.tabs[idx].colorName = nil } label: {
+                                    Circle().strokeBorder(.secondary, lineWidth: 0.5).frame(width: 12, height: 12)
                                 }.buttonStyle(.plain)
+                                ForEach(["blue", "green", "orange", "red", "purple", "teal"], id: \.self) { c in
+                                    Button { template.tabs[idx].colorName = c } label: {
+                                        Circle().fill(TagDefinition.swiftUIColor(for: c)).frame(width: 12, height: 12)
+                                            .overlay(Circle().strokeBorder(.white, lineWidth: tab.colorName == c ? 1.5 : 0))
+                                    }.buttonStyle(.plain)
+                                }
                             }
+                        }
+
+                        field("Icon") {
+                            Menu {
+                                Button("Default") { template.tabs[idx].iconOverride = nil }
+                                Divider()
+                                ForEach([
+                                    ("terminal", "Terminal"), ("globe", "Web"), ("server.rack", "Server"),
+                                    ("hammer", "Build"), ("testtube.2", "Test"), ("doc.text", "Docs"),
+                                ], id: \.0) { icon, label in
+                                    Button(label) { template.tabs[idx].iconOverride = icon }
+                                }
+                            } label: {
+                                Image(systemName: tab.iconOverride ?? "square.dashed")
+                                    .font(.system(size: 10))
+                                    .frame(width: 20, height: 20)
+                                    .background(Color.secondary.opacity(0.08)).cornerRadius(3)
+                            }
+                            .menuStyle(.borderlessButton).fixedSize()
                         }
                     }
 
-                    field("Icon") {
-                        Menu {
-                            Button("Default") { updateTab { $0.iconOverride = nil } }
-                            Divider()
-                            ForEach([
-                                ("terminal", "Terminal"), ("globe", "Web"), ("server.rack", "Server"),
-                                ("hammer", "Build"), ("testtube.2", "Test"), ("doc.text", "Docs"),
-                            ], id: \.0) { icon, label in
-                                Button(label) { updateTab { $0.iconOverride = icon } }
+                    Divider()
+
+                    field("Splits") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(tab.splits.enumerated()), id: \.element.id) { splitIdx, split in
+                                splitRow(tabIndex: idx, splitIndex: splitIdx, split: split)
                             }
-                        } label: {
-                            Image(systemName: tab.iconOverride ?? "square.dashed")
-                                .font(.system(size: 10))
-                                .frame(width: 20, height: 20)
-                                .background(Color.secondary.opacity(0.08)).cornerRadius(3)
-                        }
-                        .menuStyle(.borderlessButton).fixedSize()
-                    }
-                }
-
-                Divider()
-
-                // Splits
-                field("Splits") {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(Array(tab.splits.enumerated()), id: \.element.id) { splitIdx, split in
-                            splitRow(splitIdx, split)
-                        }
-                        Button("Add Split") { addSplit() }
+                            Button("Add Split") {
+                                template.tabs[idx].splits.append(
+                                    TemplateSplit(command: "", autoRun: true)
+                                )
+                            }
                             .font(.system(size: 10))
                             .buttonStyle(.bordered).controlSize(.mini)
+                        }
                     }
                 }
+                .padding(12)
             }
-            .padding(12)
+        } else {
+            Text("Select a tab")
+                .font(.system(size: 12))
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
     // MARK: - Split Row
 
-    private func splitRow(_ index: Int, _ split: TemplateSplit) -> some View {
+    private func splitRow(tabIndex: Int, splitIndex: Int, split: TemplateSplit) -> some View {
         HStack(spacing: 6) {
-            // Direction
             Button {
-                updateSplit(index) { $0 = TemplateSplit(
-                    command: $0.command, autoRun: $0.autoRun, subdirectory: $0.subdirectory,
-                    direction: $0.direction == .horizontal ? .vertical : .horizontal
-                )}
+                template.tabs[tabIndex].splits[splitIndex].direction =
+                    split.direction == .horizontal ? .vertical : .horizontal
             } label: {
                 Image(systemName: split.direction == .horizontal ? "rectangle.split.1x2" : "rectangle.split.2x1")
                     .font(.system(size: 10))
@@ -259,24 +291,28 @@ struct TemplateLayoutEditor: View {
             .buttonStyle(.plain)
             .help(split.direction == .horizontal ? "Horizontal" : "Vertical")
 
-            // Command
-            TextField("command", text: splitBinding(index, \.command, default: ""))
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 10, design: .monospaced))
+            TextField("command", text: Binding(
+                get: { template.tabs[tabIndex].splits[splitIndex].command ?? "" },
+                set: { template.tabs[tabIndex].splits[splitIndex].command = $0.isEmpty ? nil : $0 }
+            ))
+            .textFieldStyle(.roundedBorder)
+            .font(.system(size: 10, design: .monospaced))
 
-            // Subdirectory
-            TextField("subdir", text: splitBinding(index, \.subdirectory, default: ""))
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 10, design: .monospaced))
-                .frame(width: 80)
+            TextField("subdir", text: Binding(
+                get: { template.tabs[tabIndex].splits[splitIndex].subdirectory ?? "" },
+                set: { template.tabs[tabIndex].splits[splitIndex].subdirectory = $0.isEmpty ? nil : $0 }
+            ))
+            .textFieldStyle(.roundedBorder)
+            .font(.system(size: 10, design: .monospaced))
+            .frame(width: 80)
 
-            // Auto-run
-            Toggle("", isOn: splitBinding(index, \.autoRun))
+            Toggle("", isOn: $template.tabs[tabIndex].splits[splitIndex].autoRun)
                 .toggleStyle(.checkbox)
                 .help("Auto-run")
 
-            // Remove
-            Button { removeSplit(index) } label: {
+            Button {
+                template.tabs[tabIndex].splits.remove(at: splitIndex)
+            } label: {
                 Image(systemName: "xmark").font(.system(size: 8))
                     .foregroundStyle(.tertiary)
             }
@@ -287,53 +323,85 @@ struct TemplateLayoutEditor: View {
         .cornerRadius(4)
     }
 
-    // MARK: - Footer
+    // MARK: - Lifecycle Commands
 
-    private var footer: some View {
-        HStack {
-            Button("Copy JSON") { copyJSON() }
-                .buttonStyle(.plain).foregroundStyle(.secondary).font(.system(size: 11))
-            Spacer()
-            Button("Done") { dismiss() }
-                .keyboardShortcut(.defaultAction)
+    private var commandsSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button { showingCommands.toggle() } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: showingCommands ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 7))
+                    Text("Lifecycle Commands")
+                        .font(.system(size: 9, weight: .medium))
+                        .textCase(.uppercase)
+                    if template.onCreateCommand != nil || template.onDestroyCommand != nil {
+                        Circle().fill(.green).frame(width: 5, height: 5)
+                    }
+                    Spacer()
+                }
+                .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+
+            if showingCommands {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("On Create")
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundStyle(.tertiary)
+                        MultilineTextView(text: Binding(
+                            get: { template.onCreateCommand ?? "" },
+                            set: { template.onCreateCommand = $0.isEmpty ? nil : $0 }
+                        ), placeholder: "e.g. make install && yarn dev")
+                        .frame(height: 60)
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("On Destroy")
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundStyle(.tertiary)
+                        MultilineTextView(text: Binding(
+                            get: { template.onDestroyCommand ?? "" },
+                            set: { template.onDestroyCommand = $0.isEmpty ? nil : $0 }
+                        ), placeholder: "e.g. docker compose down")
+                        .frame(height: 60)
+                    }
+                }
+            }
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
     }
 
     // MARK: - Actions
 
     private func addTab() {
-        template.tabs.append(TemplateTab(title: "New Tab"))
-        selectedTabIndex = template.tabs.count - 1
+        let tab = TemplateTab(title: "New Tab")
+        template.tabs.append(tab)
+        selectedTabID = tab.id
     }
 
     private func removeTab() {
-        guard selectedTabIndex < template.tabs.count else { return }
-        template.tabs.remove(at: selectedTabIndex)
-        selectedTabIndex = min(selectedTabIndex, max(template.tabs.count - 1, 0))
+        let idx = selectedTabIndex
+        guard idx < template.tabs.count else { return }
+        template.tabs.remove(at: idx)
+        if template.tabs.isEmpty {
+            selectedTabID = nil
+        } else {
+            selectedTabID = template.tabs[min(idx, template.tabs.count - 1)].id
+        }
     }
 
-    private func addSplit() {
-        guard selectedTabIndex < template.tabs.count else { return }
-        template.tabs[selectedTabIndex].splits.append(
-            TemplateSplit(command: "", autoRun: true)
-        )
+    private func moveTabUp() {
+        let idx = selectedTabIndex
+        guard idx > 0 else { return }
+        template.tabs.swapAt(idx, idx - 1)
     }
 
-    private func removeSplit(_ index: Int) {
-        guard selectedTabIndex < template.tabs.count else { return }
-        template.tabs[selectedTabIndex].splits.remove(at: index)
-    }
-
-    private func updateTab(_ update: (inout TemplateTab) -> Void) {
-        guard selectedTabIndex < template.tabs.count else { return }
-        update(&template.tabs[selectedTabIndex])
-    }
-
-    private func updateSplit(_ index: Int, _ update: (inout TemplateSplit) -> Void) {
-        guard selectedTabIndex < template.tabs.count,
-              index < template.tabs[selectedTabIndex].splits.count else { return }
-        update(&template.tabs[selectedTabIndex].splits[index])
+    private func moveTabDown() {
+        let idx = selectedTabIndex
+        guard idx < template.tabs.count - 1 else { return }
+        template.tabs.swapAt(idx, idx + 1)
     }
 
     private func copyJSON() {
@@ -347,7 +415,7 @@ struct TemplateLayoutEditor: View {
         }
     }
 
-    // MARK: - Bindings
+    // MARK: - Helpers
 
     private func field<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -358,32 +426,54 @@ struct TemplateLayoutEditor: View {
             content()
         }
     }
+}
 
-    private func tabBinding<T>(_ keyPath: WritableKeyPath<TemplateTab, T>) -> Binding<T> {
-        Binding(
-            get: { selectedTabIndex < template.tabs.count ? template.tabs[selectedTabIndex][keyPath: keyPath] : template.tabs[0][keyPath: keyPath] },
-            set: { if selectedTabIndex < template.tabs.count { template.tabs[selectedTabIndex][keyPath: keyPath] = $0 } }
-        )
+// MARK: - Multi-line text view with paste support
+
+private struct MultilineTextView: NSViewRepresentable {
+    @Binding var text: String
+    var placeholder: String = ""
+    var font: NSFont = .monospacedSystemFont(ofSize: 10, weight: .regular)
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSTextView.scrollableTextView()
+        let textView = scrollView.documentView as! NSTextView
+        textView.delegate = context.coordinator
+        textView.font = font
+        textView.isRichText = false
+        textView.allowsUndo = true
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.textColor = .labelColor
+        textView.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.3)
+        textView.textContainerInset = NSSize(width: 4, height: 4)
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .bezelBorder
+        return scrollView
     }
 
-    private func tabBinding(_ keyPath: WritableKeyPath<TemplateTab, String?>, default defaultValue: String) -> Binding<String> {
-        Binding(
-            get: { (selectedTabIndex < template.tabs.count ? template.tabs[selectedTabIndex][keyPath: keyPath] : nil) ?? defaultValue },
-            set: { if selectedTabIndex < template.tabs.count { template.tabs[selectedTabIndex][keyPath: keyPath] = $0.isEmpty ? nil : $0 } }
-        )
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        let textView = scrollView.documentView as! NSTextView
+        if textView.string != text {
+            textView.string = text
+        }
     }
 
-    private func splitBinding<T>(_ index: Int, _ keyPath: WritableKeyPath<TemplateSplit, T>) -> Binding<T> {
-        Binding(
-            get: { template.tabs[selectedTabIndex].splits[index][keyPath: keyPath] },
-            set: { template.tabs[selectedTabIndex].splits[index][keyPath: keyPath] = $0 }
-        )
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
     }
 
-    private func splitBinding(_ index: Int, _ keyPath: WritableKeyPath<TemplateSplit, String?>, default defaultValue: String) -> Binding<String> {
-        Binding(
-            get: { template.tabs[selectedTabIndex].splits[index][keyPath: keyPath] ?? defaultValue },
-            set: { template.tabs[selectedTabIndex].splits[index][keyPath: keyPath] = $0.isEmpty ? nil : $0 }
-        )
+    class Coordinator: NSObject, NSTextViewDelegate {
+        var text: Binding<String>
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            text.wrappedValue = textView.string
+        }
     }
 }

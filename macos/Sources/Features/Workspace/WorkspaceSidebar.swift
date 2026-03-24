@@ -101,13 +101,28 @@ struct WorkspaceSidebar: View {
         .sheet(isPresented: $showingNewWorkspace) {
             NewWorkspaceSheet(manager: manager) { workspace, template in
                 selectedWorkspaceID = workspace.id
-                // Apply template layout after workspace is created
-                if let template, !template.tabs.isEmpty {
-                    NotificationCenter.default.post(
-                        name: Notification.Name("ghostset.applyTemplate"),
-                        object: nil,
-                        userInfo: ["template": template, "workspaceID": workspace.id]
-                    )
+
+                // Copy lifecycle commands from template to workspace
+                if let template {
+                    var updated = workspace
+                    updated.onCreateCommand = template.onCreateCommand
+                    updated.onDestroyCommand = template.onDestroyCommand
+                    updated.templateID = template.id
+                    manager.updateWorkspace(updated)
+
+                    // Run onCreate command in the worktree
+                    if let cmd = template.onCreateCommand, !cmd.isEmpty {
+                        manager.runLifecycleCommand(cmd, in: workspace.worktreePath)
+                    }
+
+                    // Apply template layout
+                    if !template.tabs.isEmpty {
+                        NotificationCenter.default.post(
+                            name: Notification.Name("ghostset.applyTemplate"),
+                            object: nil,
+                            userInfo: ["template": template, "workspaceID": workspace.id]
+                        )
+                    }
                 }
             }
         }
@@ -282,6 +297,11 @@ struct WorkspaceSidebar: View {
                 showingNewWorkspace = true
             } label: {
                 Label("New Workspace", systemImage: "plus.rectangle.on.rectangle")
+            }
+            Button {
+                openExistingProject()
+            } label: {
+                Label("Open Project", systemImage: "folder")
             }
             Divider()
             Button {
@@ -587,6 +607,36 @@ struct WorkspaceSidebar: View {
             manager.saveAsTemplate(workspace, tabGroup: group)
         }
 
+        if !manager.templates.isEmpty {
+            Menu("Apply Template") {
+                ForEach(manager.templates) { template in
+                    Button {
+                        selectedWorkspaceID = workspace.id
+
+                        // Copy lifecycle commands and template ID
+                        var updated = workspace
+                        updated.onCreateCommand = template.onCreateCommand
+                        updated.onDestroyCommand = template.onDestroyCommand
+                        updated.templateID = template.id
+                        manager.updateWorkspace(updated)
+
+                        // Run onCreate command
+                        if let cmd = template.onCreateCommand, !cmd.isEmpty {
+                            manager.runLifecycleCommand(cmd, in: workspace.worktreePath)
+                        }
+
+                        NotificationCenter.default.post(
+                            name: Notification.Name("ghostset.applyTemplate"),
+                            object: nil,
+                            userInfo: ["template": template, "workspaceID": workspace.id]
+                        )
+                    } label: {
+                        Label(template.name, systemImage: template.agent?.iconName ?? "terminal")
+                    }
+                }
+            }
+        }
+
         Button("Open in VS Code") {
             openInEditor("Visual Studio Code", path: workspace.worktreePath)
         }
@@ -614,6 +664,11 @@ struct WorkspaceSidebar: View {
         Button(deleteFromDisk ? "Delete" : "Remove", role: .destructive) {
             guard let ws = workspaceToDelete else { return }
             if deleteFromDisk {
+                // Show deleting status immediately
+                var deleting = ws
+                deleting.status = .deleting
+                manager.updateWorkspace(deleting)
+
                 Task {
                     do {
                         try await manager.deleteWorkspace(ws)
@@ -647,6 +702,26 @@ struct WorkspaceSidebar: View {
             .overlay(Circle().strokeBorder(Color.white, lineWidth: isChosen ? 2 : 0))
             .shadow(color: isChosen ? swatchColor.opacity(0.5) : .clear, radius: 3)
             .onTapGesture { newTagColor = name }
+    }
+
+    private func openExistingProject() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Select a git repository to open as a workspace"
+        panel.prompt = "Open"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task {
+            do {
+                let ws = try await manager.registerExistingProject(path: url.path)
+                await MainActor.run {
+                    selectedWorkspaceID = ws.id
+                }
+            } catch {
+                Ghostty.logger.warning("Failed to open project: \(error)")
+            }
+        }
     }
 
     private func openInEditor(_ appName: String, path: String) {

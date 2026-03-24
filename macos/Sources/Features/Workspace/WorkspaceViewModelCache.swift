@@ -158,7 +158,16 @@ final class WorkspaceViewModelCache: ObservableObject {
             if let existing = cache[workspace.id] { return existing }
             let group = WorkspaceTabGroup()
 
-            // Try restore all tabs from saved session
+            // If workspace has a template, always re-apply it (fresh tabs with auto-run commands)
+            if let templateID = workspace.templateID,
+               let template = TemplatePersistence().load().first(where: { $0.id == templateID }),
+               !template.tabs.isEmpty {
+                cache[workspace.id] = group
+                applyTemplate(template, for: workspace, app: app, baseConfig: baseConfig)
+                return group
+            }
+
+            // Otherwise try restore from saved session
             if let session = WorkspacePersistence().loadSession(workspaceID: workspace.id),
                !session.tabs.isEmpty {
                 for (i, tabState) in session.tabs.enumerated() {
@@ -170,7 +179,7 @@ final class WorkspaceViewModelCache: ObservableObject {
                         config.initialInput = agent.resumeCommand(sessionID: tabState.sessionID) + "\n"
                     }
 
-                    vm.surfaceTree = tabState.splitLayout.toSplitTree(app: app, baseConfig: config)
+                    vm.surfaceTree = tabState.splitLayout.toSplitTree(app: app, baseConfig: config, splitCommands: tabState.splitCommands)
                     var entry = WorkspaceTabEntry(title: tabState.title, viewModel: vm, agent: tabState.agent, sessionID: tabState.sessionID)
                     entry.isPinned = tabState.isPinned
                     entry.colorName = tabState.colorName
@@ -258,13 +267,11 @@ final class WorkspaceViewModelCache: ObservableObject {
         guard !template.tabs.isEmpty else { return }
         guard let workspace else { return }
 
-        // Remove the default tab if one was auto-created
         let group = tabGroup(for: workspace, app: app, baseConfig: baseConfig)
-        if group.tabs.count == 1 && group.tabs.first?.agent == nil {
-            if let firstID = group.tabs.first?.id {
-                group.closeTab(id: firstID)
-            }
-        }
+
+        // Remove existing tabs (replace with template layout)
+        let existingIDs = group.tabs.map(\.id)
+        for id in existingIDs { group.closeTab(id: id) }
 
         for templateTab in template.tabs {
             let vm = WorkspaceTerminalViewModel()
@@ -330,7 +337,9 @@ final class WorkspaceViewModelCache: ObservableObject {
     ) -> SplitTree<Ghostty.SurfaceView> {
         guard let root = buildNode(from: pane, app: app, baseConfig: baseConfig,
                                     worktreePath: worktreePath, agent: agent, isFirst: true) else {
-            return SplitTree()
+            // Fallback: create a single surface
+            let config = baseConfig ?? Ghostty.SurfaceConfiguration()
+            return SplitTree(view: Ghostty.SurfaceView(app, baseConfig: config))
         }
         return SplitTree(root: root, zoomed: nil)
     }
