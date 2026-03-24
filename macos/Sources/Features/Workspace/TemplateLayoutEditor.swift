@@ -257,18 +257,26 @@ struct TemplateLayoutEditor: View {
 
                     Divider()
 
-                    field("Splits") {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(Array(tab.splits.enumerated()), id: \.element.id) { splitIdx, split in
-                                splitRow(tabIndex: idx, splitIndex: splitIdx, split: split)
+                    if tab.layout != nil {
+                        field("Layout") {
+                            VStack(alignment: .leading, spacing: 2) {
+                                paneEditor(binding: $template.tabs[idx].layout.forceUnwrapped, depth: 0)
                             }
-                            Button("Add Split") {
-                                template.tabs[idx].splits.append(
-                                    TemplateSplit(command: nil, autoRun: false)
-                                )
+                        }
+                    } else {
+                        field("Splits") {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(Array(tab.splits.enumerated()), id: \.element.id) { splitIdx, split in
+                                    splitRow(tabIndex: idx, splitIndex: splitIdx, split: split)
+                                }
+                                Button("Add Split") {
+                                    template.tabs[idx].splits.append(
+                                        TemplateSplit(command: nil, autoRun: false)
+                                    )
+                                }
+                                .font(.system(size: 10))
+                                .buttonStyle(.bordered).controlSize(.mini)
                             }
-                            .font(.system(size: 10))
-                            .buttonStyle(.bordered).controlSize(.mini)
                         }
                     }
                 }
@@ -327,6 +335,104 @@ struct TemplateLayoutEditor: View {
         .padding(4)
         .background(Color.primary.opacity(0.02))
         .cornerRadius(4)
+    }
+
+    // MARK: - Recursive Pane Editor
+
+    private func paneEditor(binding: Binding<TemplatePane>, depth: Int) -> AnyView {
+        switch binding.wrappedValue {
+        case .terminal:
+            let leafBinding = Binding<TemplatePaneLeaf>(
+                get: {
+                    if case .terminal(let leaf) = binding.wrappedValue { return leaf }
+                    return TemplatePaneLeaf()
+                },
+                set: { binding.wrappedValue = .terminal($0) }
+            )
+            return AnyView(
+                HStack(spacing: 4) {
+                    TextField("command", text: Binding(
+                        get: { leafBinding.wrappedValue.command ?? "" },
+                        set: { leafBinding.wrappedValue.command = $0.isEmpty ? nil : $0 }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 10, design: .monospaced))
+                    TextField("subdir", text: Binding(
+                        get: { leafBinding.wrappedValue.subdirectory ?? "" },
+                        set: { leafBinding.wrappedValue.subdirectory = $0.isEmpty ? nil : $0 }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 10, design: .monospaced))
+                    .frame(width: 60)
+                    Toggle("", isOn: leafBinding.autoRun)
+                        .toggleStyle(.checkbox)
+                        .help("Auto-run")
+                    Button {
+                        let current = binding.wrappedValue
+                        binding.wrappedValue = .split(TemplatePaneSplit(
+                            direction: .horizontal,
+                            first: current,
+                            second: .terminal(TemplatePaneLeaf())
+                        ))
+                    } label: {
+                        Image(systemName: "plus.rectangle.on.rectangle").font(.system(size: 8))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Split this pane")
+                }
+                .padding(.vertical, 3).padding(.horizontal, 6)
+                .background(Color.primary.opacity(0.03))
+                .cornerRadius(3)
+            )
+
+        case .split:
+            let splitBinding = Binding<TemplatePaneSplit>(
+                get: {
+                    if case .split(let s) = binding.wrappedValue { return s }
+                    return TemplatePaneSplit(first: .terminal(TemplatePaneLeaf()), second: .terminal(TemplatePaneLeaf()))
+                },
+                set: { binding.wrappedValue = .split($0) }
+            )
+            let isH = splitBinding.wrappedValue.direction == .horizontal
+            return AnyView(
+                VStack(alignment: .leading, spacing: 2) {
+                    // Split header — compact
+                    HStack(spacing: 4) {
+                        Button {
+                            splitBinding.wrappedValue.direction = isH ? .vertical : .horizontal
+                        } label: {
+                            Image(systemName: isH ? "rectangle.split.2x1" : "rectangle.split.1x2")
+                                .font(.system(size: 8))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        Text(isH ? "H" : "V")
+                            .font(.system(size: 8, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                        Spacer()
+                        Button { binding.wrappedValue = splitBinding.wrappedValue.second } label: {
+                            Image(systemName: "xmark").font(.system(size: 7)).foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain).help("Remove split")
+                    }
+                    .padding(.horizontal, 4).padding(.vertical, 2)
+
+                    // Children — indented with a left border
+                    VStack(alignment: .leading, spacing: 3) {
+                        paneEditor(binding: splitBinding.first, depth: depth + 1)
+                        paneEditor(binding: splitBinding.second, depth: depth + 1)
+                    }
+                    .padding(.leading, 10)
+                    .overlay(alignment: .leading) {
+                        Rectangle()
+                            .fill(Color.secondary.opacity(0.15))
+                            .frame(width: 1.5)
+                            .padding(.vertical, 2)
+                    }
+                }
+            )
+        }
     }
 
     // MARK: - Lifecycle Commands
@@ -508,6 +614,19 @@ struct TemplateLayoutEditor: View {
                 .textCase(.uppercase)
             content()
         }
+    }
+}
+
+// MARK: - Binding helpers
+
+private extension Binding where Value == TemplatePane? {
+    /// Force-unwrap a Binding<TemplatePane?> to Binding<TemplatePane>.
+    /// Only safe to use when the value is known to be non-nil (guarded by `if tab.layout != nil`).
+    var forceUnwrapped: Binding<TemplatePane> {
+        Binding<TemplatePane>(
+            get: { self.wrappedValue ?? .terminal(TemplatePaneLeaf()) },
+            set: { self.wrappedValue = $0 }
+        )
     }
 }
 

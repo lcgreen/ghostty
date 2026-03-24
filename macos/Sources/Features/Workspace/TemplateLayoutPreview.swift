@@ -67,14 +67,8 @@ struct TemplateLayoutPreview: View {
         if let layout = tab.layout {
             paneStructure(layout, color: tabColor(tab))
         } else {
-            HStack(spacing: 1) {
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(tabColor(tab).opacity(0.12))
-                ForEach(tab.splits) { _ in
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(tabColor(tab).opacity(0.08))
-                }
-            }
+            // Build flat splits respecting direction
+            flatSplitStructure(tab)
         }
     }
 
@@ -105,6 +99,23 @@ struct TemplateLayoutPreview: View {
         case .terminal: return 0
         case .split(let s): return 1 + countPaneSplits(s.first) + countPaneSplits(s.second)
         }
+    }
+
+    private func flatSplitStructure(_ tab: TemplateTab) -> AnyView {
+        let color = tabColor(tab)
+        let mainBlock = AnyView(RoundedRectangle(cornerRadius: 1).fill(color.opacity(0.12)))
+
+        // Build nested structure from flat splits
+        var result = mainBlock
+        for split in tab.splits {
+            let newBlock = AnyView(RoundedRectangle(cornerRadius: 1).fill(color.opacity(0.08)))
+            if split.direction == .horizontal {
+                result = AnyView(HStack(spacing: 1) { result; newBlock })
+            } else {
+                result = AnyView(VStack(spacing: 1) { result; newBlock })
+            }
+        }
+        return result
     }
 
     // MARK: - Helpers

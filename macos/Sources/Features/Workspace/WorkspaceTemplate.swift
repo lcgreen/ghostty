@@ -452,7 +452,7 @@ final class TemplatePersistence {
             return WorkspaceTemplate.presets
         }
         do {
-            return try decoder.decode([WorkspaceTemplate].self, from: data)
+            return try decoder.decode([WorkspaceTemplate].self, from: data).map { $0.validated() }
         } catch {
             print("[TemplatePersistence] Warning: failed to decode templates.json — returning empty array to avoid overwriting user data. Error: \(error)")
             return []
