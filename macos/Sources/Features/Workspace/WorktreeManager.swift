@@ -23,6 +23,8 @@ final class WorktreeManager: ObservableObject {
     @Published var externalEditors: [ExternalEditor] = ExternalEditor.defaults
 
     let notifier = WorkspaceNotifier()
+    let profileManager = ProfileManager()
+    let taskManager = TaskManager()
 
     // MARK: - Configuration
 
@@ -39,6 +41,9 @@ final class WorktreeManager: ObservableObject {
 
     // MARK: - Init
 
+    private var profileCancellable: Any?
+    private var taskManagerCancellable: Any?
+
     init() {
         self.persistence = WorkspacePersistence()
         self.workspaces = persistence.load()
@@ -49,6 +54,16 @@ final class WorktreeManager: ObservableObject {
         self.externalEditors = WorktreeManager.loadExternalEditors()
         startAutoSave()
         detectCrashRecovery()
+
+        // Forward profile changes so sidebar re-renders
+        profileCancellable = profileManager.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+
+        // Forward task manager changes so sidebar re-renders
+        taskManagerCancellable = taskManager.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
     }
 
     private let templatePersistence = TemplatePersistence()
@@ -310,11 +325,17 @@ final class WorktreeManager: ObservableObject {
     /// Stop tracking a workspace without deleting files from disk.
     func untrackWorkspace(_ workspace: Workspace) {
         workspaces.removeAll { $0.id == workspace.id }
+        profileManager.removeWorkspaceFromAllProfiles(id: workspace.id)
         saveInBackground()
     }
 
     /// Deletes a workspace: removes worktree from disk, optionally deletes branch.
-    func deleteWorkspace(_ workspace: Workspace, deleteBranch: Bool = false) async throws {
+    /// Remove a workspace from the visible list immediately (before async deletion).
+    func hideWorkspace(_ workspace: Workspace) {
+        workspaces.removeAll { $0.id == workspace.id }
+    }
+
+    func deleteWorkspace(_ workspace: Workspace, deleteBranch: Bool = false, skipRemoveFromList: Bool = false) async throws {
         // Run onDestroy lifecycle command before removing
         if let cmd = workspace.onDestroyCommand, !cmd.isEmpty {
             runLifecycleCommand(cmd, in: workspace.worktreePath)
@@ -329,7 +350,10 @@ final class WorktreeManager: ObservableObject {
         }
 
         await MainActor.run {
-            workspaces.removeAll { $0.id == workspace.id }
+            if !skipRemoveFromList {
+                workspaces.removeAll { $0.id == workspace.id }
+            }
+            profileManager.removeWorkspaceFromAllProfiles(id: workspace.id)
             saveInBackground()
         }
     }
@@ -393,6 +417,11 @@ final class WorktreeManager: ObservableObject {
         guard result.exitCode == 0 else {
             throw WorktreeError.creationFailed(result.stderr)
         }
+
+        // Set upstream tracking so `git pull` works without specifying remote/branch
+        _ = try? await shell(
+            "git", "-C", path, "branch", "--set-upstream-to=origin/\(baseBranch)", branch
+        )
     }
 
     private func gitWorktreeRemove(repo: String, path: String) async throws {

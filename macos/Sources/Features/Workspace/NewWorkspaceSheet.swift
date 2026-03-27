@@ -496,17 +496,26 @@ struct NewWorkspaceSheet: View {
             : workspaceName
         let finalName = name.isEmpty ? "workspace-\(Int.random(in: 1000...9999))" : name
         let tags = Array(selectedTags)
+        let template = selectedTemplate
         Self.addRecentRepo(repoPath)
-        Task {
-            do {
-                let task = taskDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-                let ws = try await manager.createWorkspace(
-                    repo: repoPath, name: finalName, baseBranch: baseBranch,
-                    agent: selectedAgent, tags: tags,
-                    taskDescription: task.isEmpty ? nil : task
-                )
-                dismiss(); onCreated(ws, selectedTemplate)
-            } catch { errorMessage = error.localizedDescription; isCreating = false }
+
+        let taskDesc = taskDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        let agent = selectedAgent
+        let branch = baseBranch
+        let repo = repoPath
+
+        // Dismiss sheet immediately — creation continues in background
+        dismiss()
+
+        manager.taskManager.enqueue(title: "Creating \(finalName)...", workspaceID: nil) { [manager, onCreated] in
+            let ws = try await manager.createWorkspace(
+                repo: repo, name: finalName, baseBranch: branch,
+                agent: agent, tags: tags,
+                taskDescription: taskDesc.isEmpty ? nil : taskDesc
+            )
+            await MainActor.run {
+                onCreated(ws, template)
+            }
         }
     }
 }

@@ -46,6 +46,13 @@ struct TagDefinition: Codable, Identifiable, Hashable {
         TagDefinition(name: "refactor", colorName: "purple", iconName: "arrow.triangle.2.circlepath"),
         TagDefinition(name: "experiment", colorName: "orange", iconName: "flask"),
         TagDefinition(name: "review", colorName: "teal", iconName: "eye"),
+        TagDefinition(name: "javascript", colorName: "yellow", iconName: "curlybraces"),
+        TagDefinition(name: "typescript", colorName: "indigo", iconName: "curlybraces"),
+        TagDefinition(name: "python", colorName: "green", iconName: "chevron.left.forwardslash.chevron.right"),
+        TagDefinition(name: "go", colorName: "teal", iconName: "diamond"),
+        TagDefinition(name: "rust", colorName: "orange", iconName: "gearshape"),
+        TagDefinition(name: "zig", colorName: "orange", iconName: "bolt"),
+        TagDefinition(name: "swift", colorName: "blue", iconName: "swift"),
     ]
 
     // MARK: - Available Colors
@@ -89,7 +96,6 @@ struct TagDefinition: Codable, Identifiable, Hashable {
         "patch": "bugfix",
         "feat": "feature",
         "feature": "feature",
-        "add": "feature",
         "implement": "feature",
         "refactor": "refactor",
         "cleanup": "refactor",
@@ -97,7 +103,6 @@ struct TagDefinition: Codable, Identifiable, Hashable {
         "reorganize": "refactor",
         "experiment": "experiment",
         "spike": "experiment",
-        "try": "experiment",
         "proto": "experiment",
         "review": "review",
         "pr": "review",
@@ -113,6 +118,11 @@ struct TagDefinition: Codable, Identifiable, Hashable {
         for word in words {
             if let tag = autoTagKeywords[word] {
                 matched.insert(tag)
+            } else {
+                // Prefix matching: "prototype" matches "proto"
+                for (keyword, tag) in autoTagKeywords where word.hasPrefix(keyword) {
+                    matched.insert(tag)
+                }
             }
         }
         return Array(matched).sorted()
@@ -124,26 +134,53 @@ struct TagDefinition: Codable, Identifiable, Hashable {
         guard let contents = try? fm.contentsOfDirectory(atPath: repoPath) else { return [] }
         var tags: [String] = []
 
-        let fileSet = Set(contents)
-        if fileSet.contains("package.json") || fileSet.contains("tsconfig.json") {
-            tags.append("javascript")
+        var detectedTags = Set<String>()
+        Self.detectLanguageTagsInFileSet(Set(contents), into: &detectedTags)
+
+        // Second pass: scan immediate subdirectories (depth 1, limit 10) for monorepos
+        let subdirs = contents
+            .filter { entry in
+                var isDir: ObjCBool = false
+                let full = (repoPath as NSString).appendingPathComponent(entry)
+                fm.fileExists(atPath: full, isDirectory: &isDir)
+                return isDir.boolValue
+            }
+            .prefix(10)
+
+        for subdir in subdirs {
+            let subdirPath = (repoPath as NSString).appendingPathComponent(subdir)
+            if let subdirContents = try? fm.contentsOfDirectory(atPath: subdirPath) {
+                Self.detectLanguageTagsInFileSet(Set(subdirContents), into: &detectedTags)
+            }
+        }
+
+        tags = Array(detectedTags).sorted()
+        return tags
+    }
+
+    /// Detect language tags from a set of filenames and insert into the provided set.
+    private static func detectLanguageTagsInFileSet(_ fileSet: Set<String>, into tags: inout Set<String>) {
+        if fileSet.contains("tsconfig.json") {
+            tags.insert("typescript")
+        }
+        if fileSet.contains("package.json") {
+            tags.insert("javascript")
         }
         if fileSet.contains("requirements.txt") || fileSet.contains("pyproject.toml") || fileSet.contains("setup.py") {
-            tags.append("python")
+            tags.insert("python")
         }
         if fileSet.contains("go.mod") {
-            tags.append("go")
+            tags.insert("go")
         }
         if fileSet.contains("Cargo.toml") {
-            tags.append("rust")
+            tags.insert("rust")
         }
         if fileSet.contains("build.zig") {
-            tags.append("zig")
+            tags.insert("zig")
         }
         if fileSet.contains("Package.swift") {
-            tags.append("swift")
+            tags.insert("swift")
         }
-        return tags
     }
 
     /// Count how many workspaces use this tag.
@@ -158,6 +195,6 @@ struct TagDefinition: Codable, Identifiable, Hashable {
                 return colorOption.name
             }
         }
-        return availableColors.first?.name ?? "blue"
+        return availableColors.randomElement()?.name ?? "blue"
     }
 }

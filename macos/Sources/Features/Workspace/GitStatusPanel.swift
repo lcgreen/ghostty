@@ -4,6 +4,7 @@ import SwiftUI
 /// staged/unstaged sections, files grouped by directory with line counts.
 struct GitStatusPanel: View {
     let workspace: Workspace
+    @ObservedObject var manager: WorktreeManager
 
     @State private var changedFiles: [GitFileChange] = []
     @State private var isLoading = false
@@ -80,7 +81,19 @@ struct GitStatusPanel: View {
 
             // Commit button (only when message + staged files)
             if !commitMessage.isEmpty && !stagedFiles.isEmpty {
-                Button { Task { await commit() } } label: {
+                Button {
+                    let path = workspace.worktreePath
+                    let msg = commitMessage
+                    let wsID = workspace.id
+                    manager.taskManager.enqueue(
+                        title: "Committing to \(branchName.isEmpty ? "branch" : branchName)...",
+                        workspaceID: wsID
+                    ) {
+                        _ = await GitStatusPanel.gitShellAsync(["git", "-C", path, "commit", "-m", msg])
+                    }
+                    commitMessage = ""
+                    Task { await loadStatus(path: workspace.worktreePath) }
+                } label: {
                     Image(systemName: "checkmark")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundColor(.green)
@@ -89,7 +102,17 @@ struct GitStatusPanel: View {
             }
 
             // Push button
-            Button { Task { await push() } } label: {
+            Button {
+                let path = workspace.worktreePath
+                let branch = branchName
+                let wsID = workspace.id
+                manager.taskManager.enqueue(
+                    title: "Pushing \(branch.isEmpty ? "branch" : branch)...",
+                    workspaceID: wsID
+                ) {
+                    _ = await GitStatusPanel.gitShellAsync(["git", "-C", path, "push"])
+                }
+            } label: {
                 Image(systemName: "arrow.up")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.secondary)
@@ -326,6 +349,10 @@ struct GitStatusPanel: View {
     // MARK: - Shell
 
     private func gitAsync(_ args: [String]) async -> String? {
+        await GitStatusPanel.gitShellAsync(args)
+    }
+
+    static func gitShellAsync(_ args: [String]) async -> String? {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let p = Process(); let pipe = Pipe()

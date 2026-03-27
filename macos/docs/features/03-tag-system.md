@@ -232,46 +232,31 @@ Iterates `availableColors` in palette order and returns the first color whose `n
 
 ## Known Issues
 
-1. **Language tags are not linked to TagDefinition presets.** `detectLanguageTags` returns plain strings (e.g., `"javascript"`) that have no corresponding `TagDefinition` with a color or icon. When displayed, these fall back to a `TagDefinition(name:, colorName: "secondary")` constructed by `WorktreeManager.tagDefinition(for:)`.
+1. **Hierarchical tags (parentTag) defined but not exercised.** The `parentTag` property supports tag hierarchies, but no presets or UI flows create them.
 
-2. **TypeScript is not separately detected.** Both `package.json` and `tsconfig.json` resolve to the same `"javascript"` tag. A project with only `tsconfig.json` (unlikely but possible) would still be tagged `"javascript"`.
+## Resolved Issues
 
-3. **No recursive language detection.** Only root-level files are scanned. A monorepo with language-specific subdirectories (e.g., `backend/go.mod`, `frontend/package.json`) would not detect those languages.
-
-4. **Auto-tag keyword `"try"` is overly broad.** The word "try" appears frequently in natural language workspace names (e.g., "try new layout") and may incorrectly auto-tag as `"experiment"`.
-
-5. **Auto-tag keyword `"add"` may be too generic.** Common in non-feature contexts (e.g., "add tests", "add docs") but always resolves to `"feature"`.
-
-6. **No tag deletion cascade.** When a tag definition is removed via `removeTagDefinition`, workspaces that reference that tag name in their `tags` array are not automatically updated. The orphaned tag name strings persist until manually removed.
-
-7. **Hierarchical tags (parentTag) are defined but not exercised.** The `parentTag` property and `displayName` computed property support tag hierarchies, but no presets or UI flows create hierarchical tags.
-
-8. **Color exhaustion wraps silently.** `nextUnusedColor` returns `"blue"` when all 10 colors are in use, which may create visual ambiguity with the existing `"feature"` preset tag.
-
-9. **`inferTags` does not detect partial matches.** The keyword `"proto"` matches only the exact word "proto", not "prototype" or "prototyping", since the input is split on non-alphanumeric characters.
+| Issue | Resolution |
+|-------|-----------|
+| Language tags not linked to presets | Added 7 language presets with colors and icons |
+| TypeScript not separately detected | Split: `tsconfig.json` → "typescript", `package.json` → "javascript" |
+| No recursive language detection | Scans up to 10 immediate subdirectories for monorepo support |
+| "try" keyword too broad | Removed from autoTagKeywords |
+| "add" keyword too generic | Removed from autoTagKeywords |
+| No tag deletion cascade | Fixed — `removeTagDefinition` strips tag from all workspaces |
+| Color exhaustion wraps to blue | Now returns random color from palette |
+| inferTags no partial matches | Added prefix matching (e.g., "prototype" matches "proto") |
+| Tag rename not supported | Added rename in enhanced tag popover with cascade to workspaces |
 
 ## Future Enhancements
 
-1. **Language tag presets.** Add `TagDefinition` presets for detected languages with appropriate colors and icons (e.g., `"python"` with yellow and a snake icon).
-
-2. **Smart auto-tagging.** Expand beyond exact keyword matching to support substring/prefix matching, regex patterns, or ML-based classification.
-
-3. **Tag groups and hierarchies.** Fully implement the `parentTag` system with UI support for nested tag trees (e.g., `"frontend/react"`, `"frontend/vue"`).
-
-4. **Tag-based workspace filtering.** Add sidebar filter chips that restrict the workspace list to selected tags (partially implemented in sidebar).
-
-5. **Custom icons for tags.** Allow users to pick SF Symbols when creating custom tags, not just colors.
-
-6. **Tag merge and rename.** Support renaming a tag across all workspaces, and merging two tags into one.
-
-7. **Recursive language detection.** Scan subdirectories (with depth limits) to detect languages in monorepos.
-
-8. **Tag statistics dashboard.** Show tag usage distribution, most active tags, and tag-based workspace grouping.
-
-9. **Tag-aware workspace templates.** Pre-configure workspace settings (agent type, environment variables) based on assigned tags.
-
-10. **Import/export tag definitions.** Allow sharing tag configurations across machines or teams.
+1. **Tag groups and hierarchies.** Fully implement `parentTag` with UI for nested tag trees
+2. **Custom icons for tags.** SF Symbol picker when creating tags
+3. **Tag statistics dashboard.** Usage distribution, most active tags
+4. **Tag-aware workspace templates.** Pre-configure settings based on tags
+5. **Import/export tag definitions.** Share tag configs across machines/teams
 
 ## Changelog
 
-- 2026-03-20: Initial spec. Documented all properties, methods, preset tags, color palette, auto-tag keywords, language detection rules, and known issues from `TagDefinition.swift` at commit `8aefb7f`.
+- 2026-03-20: Initial spec
+- 2026-03-25: Fixed all known issues — language presets, TypeScript detection, recursive monorepo scanning, removed overly broad keywords, prefix matching in inferTags, random color on exhaustion, tag rename/delete with cascade

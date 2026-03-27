@@ -43,6 +43,7 @@ struct WorkspaceSidebar: View {
     @State private var pendingNewWorkspace: Workspace?
     @State private var confirmApplyTemplate: WorkspaceTemplate?
     @State private var confirmApplyWorkspace: Workspace?
+    @State private var showingProfiles = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -68,7 +69,13 @@ struct WorkspaceSidebar: View {
 
             if let ws = selectedWorkspace, showingGitPanel {
                 Divider().opacity(0.3)
-                GitStatusPanel(workspace: ws)
+                GitStatusPanel(workspace: ws, manager: manager)
+            }
+
+            let hasTasks = manager.taskManager.hasActiveTasks || !manager.taskManager.recentTasks.isEmpty
+            if hasTasks {
+                Divider().opacity(0.3)
+                TaskStatusBar(taskManager: manager.taskManager)
             }
         }
         .frame(minWidth: 220)
@@ -125,6 +132,11 @@ struct WorkspaceSidebar: View {
             NewWorkspaceSheet(manager: manager) { workspace, template in
                 selectedWorkspaceID = workspace.id
 
+                // Auto-assign to active profile so the new workspace is visible
+                if let activeID = manager.profileManager.activeProfileID {
+                    manager.profileManager.assignWorkspace(id: workspace.id, to: activeID)
+                }
+
                 if let template {
                     if !template.variables.isEmpty {
                         // Prompt user for variable values before applying
@@ -146,6 +158,9 @@ struct WorkspaceSidebar: View {
         }
         .sheet(isPresented: $showingEnvironments) {
             EnvironmentManagerView(manager: manager)
+        }
+        .sheet(isPresented: $showingProfiles) {
+            ProfileManagerView(manager: manager)
         }
         .sheet(
             isPresented: .init(
@@ -245,7 +260,9 @@ struct WorkspaceSidebar: View {
     // MARK: - Filtered Workspaces
 
     private var filteredWorkspaces: [Workspace] {
+        let visibleIDs = manager.profileManager.filteredWorkspaceIDs(allWorkspaces: manager.workspaces)
         let filtered = manager.workspaces.filter { ws in
+            guard visibleIDs.contains(ws.id) else { return false }
             let matchesArchive = workspaceFilter == .all ||
                 (workspaceFilter == .active && !ws.isArchived) ||
                 (workspaceFilter == .archived && ws.isArchived)
@@ -297,10 +314,9 @@ struct WorkspaceSidebar: View {
 
     private var header: some View {
         HStack {
-            Text("Workspaces")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
+            ProfileSwitcher(profileManager: manager.profileManager) {
+                showingProfiles = true
+            }
             Spacer()
             Button {
                 withAnimation(.easeInOut(duration: 0.15)) {
@@ -689,14 +705,58 @@ struct WorkspaceSidebar: View {
     // MARK: - Workspace List
 
     private var workspaceList: some View {
-        List(selection: $selectedWorkspaceID) {
+        let pm = manager.profileManager
+        let isAllView = pm.activeProfileID == nil
+        let hasProfiles = !pm.profiles.isEmpty
+
+        return List(selection: $selectedWorkspaceID) {
             if filteredWorkspaces.isEmpty {
                 if manager.workspaces.isEmpty {
                     emptyPlaceholder(icon: "rectangle.stack.badge.plus", message: "No workspaces")
                 } else {
                     emptyPlaceholder(icon: "magnifyingglass", message: "No matches")
                 }
+            } else if isAllView && hasProfiles {
+                // Group by profile when viewing all workspaces
+                ForEach(pm.profiles) { profile in
+                    let profileWorkspaces = filteredWorkspaces.filter { profile.workspaceIDs.contains($0.id) }
+                    if !profileWorkspaces.isEmpty {
+                        Section {
+                            ForEach(profileWorkspaces) { workspace in
+                                workspaceRowView(for: workspace)
+                                    .tag(workspace.id)
+                                    .contextMenu { contextMenu(for: workspace) }
+                            }
+                        } header: {
+                            HStack(spacing: 4) {
+                                Image(systemName: profile.iconName)
+                                    .font(.system(size: 9))
+                                Text(profile.name)
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                // Unassigned workspaces
+                let assignedIDs = Set(pm.profiles.flatMap(\.workspaceIDs))
+                let unassigned = filteredWorkspaces.filter { !assignedIDs.contains($0.id) }
+                if !unassigned.isEmpty {
+                    Section {
+                        ForEach(unassigned) { workspace in
+                            workspaceRowView(for: workspace)
+                                .tag(workspace.id)
+                                .contextMenu { contextMenu(for: workspace) }
+                        }
+                    } header: {
+                        Text("Unassigned")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
             } else {
+                // Single profile view or no profiles — flat list
                 ForEach(filteredWorkspaces) { workspace in
                     workspaceRowView(for: workspace)
                         .tag(workspace.id)
@@ -829,6 +889,25 @@ struct WorkspaceSidebar: View {
             }
         }
 
+        if !manager.profileManager.profiles.isEmpty {
+            Menu("Move to...") {
+                ForEach(manager.profileManager.profiles) { profile in
+                    Button {
+                        manager.profileManager.assignWorkspace(id: workspace.id, to: profile.id)
+                    } label: {
+                        Label(profile.name, systemImage: profile.iconName)
+                    }
+                    .disabled(profile.workspaceIDs.contains(workspace.id))
+                }
+                Divider()
+                if manager.profileManager.profiles.contains(where: { $0.workspaceIDs.contains(workspace.id) }) {
+                    Button("Remove from Profile") {
+                        manager.profileManager.removeWorkspaceFromAllProfiles(id: workspace.id)
+                    }
+                }
+            }
+        }
+
         Divider()
 
         Button("Settings...") {
@@ -878,23 +957,20 @@ struct WorkspaceSidebar: View {
     private var deleteAlert: some View {
         Button(deleteFromDisk ? "Delete" : "Remove", role: .destructive) {
             guard let ws = workspaceToDelete else { return }
-            if deleteFromDisk {
-                // Show deleting status immediately
-                var deleting = ws
-                deleting.status = .deleting
-                manager.updateWorkspace(deleting)
 
-                Task {
-                    do {
-                        try await manager.deleteWorkspace(ws)
-                    } catch {
-                        deleteError = error.localizedDescription
-                    }
-                    if selectedWorkspaceID == ws.id { selectedWorkspaceID = manager.workspaces.first?.id }
+            // Select next workspace immediately
+            if selectedWorkspaceID == ws.id {
+                selectedWorkspaceID = manager.workspaces.first(where: { $0.id != ws.id })?.id
+            }
+
+            if deleteFromDisk {
+                // Hide from list immediately, delete in background
+                manager.hideWorkspace(ws)
+                manager.taskManager.enqueue(title: "Deleting \(ws.name)...", workspaceID: ws.id) {
+                    try await manager.deleteWorkspace(ws, skipRemoveFromList: true)
                 }
             } else {
                 manager.untrackWorkspace(ws)
-                if selectedWorkspaceID == ws.id { selectedWorkspaceID = manager.workspaces.first?.id }
             }
         }
         Button("Cancel", role: .cancel) {}
@@ -987,7 +1063,9 @@ struct WorkspaceSidebar: View {
         manager.updateWorkspace(updated)
 
         if let cmd = resolvedCreate, !cmd.isEmpty {
-            manager.runLifecycleCommand(cmd, in: workspace.worktreePath)
+            manager.taskManager.enqueue(title: "Running onCreate...", workspaceID: workspace.id) {
+                manager.runLifecycleCommand(cmd, in: workspace.worktreePath)
+            }
         }
 
         NotificationCenter.default.post(
@@ -1019,7 +1097,9 @@ struct WorkspaceSidebar: View {
         manager.updateWorkspace(updated)
 
         if let cmd = resolvedCreate, !cmd.isEmpty {
-            manager.runLifecycleCommand(cmd, in: workspace.worktreePath)
+            manager.taskManager.enqueue(title: "Running onCreate...", workspaceID: workspace.id) {
+                manager.runLifecycleCommand(cmd, in: workspace.worktreePath)
+            }
         }
 
         if !template.tabs.isEmpty {

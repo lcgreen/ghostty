@@ -41,7 +41,21 @@ struct WorkspaceDiffView: View {
         )) {
             Button("Cancel", role: .cancel) { mergeTarget = nil }
             Button("Merge", role: .destructive) {
-                if let target = mergeTarget { Task { await merge(target) } }
+                if let target = mergeTarget {
+                    let repoPath = target.workspace.repoPath
+                    let branch = target.workspace.branch
+                    let wsID = target.workspace.id
+                    manager.taskManager.enqueue(
+                        title: "Merging \(branch) into main...",
+                        workspaceID: wsID
+                    ) {
+                        _ = await GitShell.asyncOutput(
+                            ["git", "-C", repoPath, "merge", branch]
+                        )
+                    }
+                    mergeTarget = nil
+                    Task { await loadAllDiffs() }
+                }
             }
         } message: {
             if let t = mergeTarget {
